@@ -68,7 +68,9 @@
             Paperclip: <><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" /></>,
             FileText: <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><line x1="16" y1="13" x2="8" y2="13" /><line x1="16" y1="17" x2="8" y2="17" /><polyline points="10 9 9 9 8 9" /></>,
             Video: <><polygon points="23 7 16 12 23 17 23 7" /><rect x="1" y="5" width="15" height="14" rx="2" ry="2" /></>,
-            VideoOff: <><path d="M16 16v1a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h2" /><line x1="2" y1="2" x2="22" y2="22" /></>
+            VideoOff: <><path d="M16 16v1a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h2" /><line x1="2" y1="2" x2="22" y2="22" /></>,
+            UserPlus: <><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="8.5" cy="7" r="4" /><line x1="20" y1="8" x2="20" y2="14" /><line x1="23" y1="11" x2="17" y2="11" /></>,
+            Check: <polyline points="20 6 9 17 4 12" />
         };
 
         const Icon = ({ name, size = 20, className = "" }) => {
@@ -159,6 +161,8 @@
             const [connectedPeers, setConnectedPeers] = useState([]); 
             const [status, setStatus] = useState(null);
             const [showSecurity, setShowSecurity] = useState(false);
+            const [inviteCopied, setInviteCopied] = useState(false);
+            const [prefillRoomId, setPrefillRoomId] = useState('');
             
             // Audio Controls State
             const [volume, setVolume] = useState(1);
@@ -172,6 +176,15 @@
             const fileInputRef = useRef(null);
             const connectionsRef = useRef({});
             const mediaRefs = useRef({}); // Store references to video elements in sidebar
+
+            // --- ON MOUNT: CHECK FOR INVITE LINK ---
+            useEffect(() => {
+                const params = new URLSearchParams(window.location.search);
+                const roomIdParam = params.get('room');
+                if (roomIdParam) {
+                    setPrefillRoomId(roomIdParam);
+                }
+            }, []);
 
             // --- AUDIO/VIDEO MANAGEMENT EFFECT ---
             useEffect(() => {
@@ -294,8 +307,7 @@
                         mediaRefs.current[myId].play();
                     }
 
-                    // Update all existing calls (replaceTrack is complex, easiest to re-call for this simple app)
-                    // Note: In production, use replaceTrack. Here we re-call to ensure video connects.
+                    // Update all existing calls
                     connectedPeers.forEach(p => { 
                         if(!p.self) {
                            const call = peerRef.current.call(p.id, stream);
@@ -346,7 +358,7 @@
                 }
             }, [isSharingScreen]);
 
-            // --- MESSAGING & FILES ---
+            // --- MESSAGING & FILES & INVITES ---
 
             const sendMessage = (e) => {
                 e.preventDefault();
@@ -394,6 +406,25 @@
                 reader.readAsArrayBuffer(file);
             };
 
+            const copyInvite = () => {
+                const url = `${window.location.origin}${window.location.pathname}?room=${roomData.id}`;
+                const text = `Join me on VanishChat.\nRoom ID: ${roomData.id}\nLink: ${url}\n(Ask me for the passcode)`;
+                
+                // Fallback copy method
+                const textArea = document.createElement("textarea");
+                textArea.value = text;
+                document.body.appendChild(textArea);
+                textArea.select();
+                try {
+                    document.execCommand('copy');
+                    setInviteCopied(true);
+                    setTimeout(() => setInviteCopied(false), 2000);
+                } catch (err) {
+                    setStatus("Copy Failed");
+                }
+                document.body.removeChild(textArea);
+            };
+
             const addSystemMessage = (text) => setMessages(prev => [...prev, { id: Date.now(), type: 'system', text }]);
 
             const createRoom = (e) => {
@@ -429,7 +460,6 @@
                     {view === 'landing' ? (
                         <div className="max-w-5xl mx-auto pt-24 px-6 pb-20 relative">
                             <div className="text-center mb-16">
-                                <Icon name="Ghost" size={64} className="text-indigo-400 mb-6" />
                                 <h1 className="text-7xl font-black mb-4 tracking-tighter text-white">VanishChat</h1>
                                 <p className="text-slate-400 text-xl max-w-xl mx-auto font-medium">Disposable secure communication.</p>
                             </div>
@@ -448,7 +478,7 @@
                                     <h2 className="text-2xl font-bold mb-8 flex items-center gap-4 text-emerald-400"><Icon name="ShieldCheck" /> Join Hub</h2>
                                     <form onSubmit={joinRoom} className="space-y-4">
                                         <input required name="nickname" className="w-full bg-slate-800/50 border border-slate-700 rounded-2xl px-6 py-4 outline-none focus:ring-2 focus:ring-emerald-500 text-sm text-white" placeholder="Display Name" />
-                                        <input required name="roomId" className="w-full bg-slate-800/50 border border-slate-700 rounded-2xl px-6 py-4 outline-none focus:ring-2 focus:ring-emerald-500 uppercase font-mono text-sm text-white" placeholder="Room ID" />
+                                        <input required name="roomId" defaultValue={prefillRoomId} className="w-full bg-slate-800/50 border border-slate-700 rounded-2xl px-6 py-4 outline-none focus:ring-2 focus:ring-emerald-500 uppercase font-mono text-sm text-white" placeholder="Room ID" />
                                         <input required name="roomCode" type="password" className="w-full bg-slate-800/50 border border-slate-700 rounded-2xl px-6 py-4 outline-none focus:ring-2 focus:ring-emerald-500 text-sm text-white" placeholder="Passcode" />
                                         <button className="w-full bg-emerald-600 hover:bg-emerald-700 py-5 rounded-2xl font-black transition-all text-white">ENTER HUB</button>
                                     </form>
@@ -465,7 +495,6 @@
                         <div className="flex flex-col h-screen overflow-hidden">
                             <header className="h-20 border-b border-slate-800 bg-slate-900/40 backdrop-blur-xl flex items-center justify-between px-8 shrink-0 z-50">
                                 <div className="flex items-center gap-5">
-                                    <Icon name="Ghost" className="text-indigo-400" />
                                     <div>
                                         <h3 className="font-black text-xs uppercase tracking-widest mb-1">{roomData.name}</h3>
                                         <div className="flex items-center gap-2">
@@ -474,6 +503,15 @@
                                     </div>
                                 </div>
                                 <div className="flex gap-4 items-center">
+                                    {/* Invite Button */}
+                                    <button 
+                                        onClick={copyInvite} 
+                                        className={`p-2.5 rounded-xl border transition-all flex items-center gap-2 ${inviteCopied ? 'bg-emerald-500/20 border-emerald-500/30 text-emerald-400' : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-white hover:bg-slate-700'}`}
+                                        title="Copy Invite Link"
+                                    >
+                                        {inviteCopied ? <Icon name="Check" size={16} /> : <Icon name="UserPlus" size={16} />}
+                                    </button>
+
                                     {/* Volume & Deafen Controls */}
                                     <div className="flex items-center bg-slate-800 rounded-xl border border-slate-700 p-1 gap-2 mr-2">
                                         <button 
