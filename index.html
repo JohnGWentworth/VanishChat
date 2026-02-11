@@ -181,12 +181,9 @@
             const [inviteCopied, setInviteCopied] = useState(false);
             const [prefillRoomId, setPrefillRoomId] = useState('');
             const [isLoading, setIsLoading] = useState(false);
-            const [retryCount, setRetryCount] = useState(0);
             
-            // Audio Controls State
-            const [volume, setVolume] = useState(1);
-            const [isDeafened, setIsDeafened] = useState(false);
-
+            // Refs
+            const loadingRef = useRef(false); // Ref for immediate access in timeouts
             const peerRef = useRef(null);
             const localStreamRef = useRef(null);
             const screenStreamRef = useRef(null);
@@ -196,6 +193,10 @@
             const connectionsRef = useRef({});
             const mediaRefs = useRef({});
 
+            // Audio Controls
+            const [volume, setVolume] = useState(1);
+            const [isDeafened, setIsDeafened] = useState(false);
+
             useEffect(() => {
                 const params = new URLSearchParams(window.location.search);
                 const roomIdParam = params.get('room');
@@ -203,6 +204,11 @@
                     setPrefillRoomId(roomIdParam);
                 }
             }, []);
+
+            // Keep loadingRef in sync
+            useEffect(() => {
+                loadingRef.current = isLoading;
+            }, [isLoading]);
 
             useEffect(() => {
                 Object.values(mediaRefs.current).forEach(el => {
@@ -215,22 +221,21 @@
 
             // --- PEERJS LOGIC ---
             const initPeer = (myId, nickname, targetRoomId = null, joinCode = null) => {
-                // Initialize with robust STUN servers
                 const peer = new Peer(myId, PEER_CONFIG);
                 peerRef.current = peer;
 
-                // Handle Hub Not Found or Connection Errors
                 peer.on('error', (err) => {
                     console.error("Peer Error:", err);
-                    if (err.type === 'peer-unavailable') {
-                        setIsLoading(false);
-                        setStatus(`Hub ID '${targetRoomId}' invalid or offline.`);
-                        setTimeout(() => setStatus(null), 4000);
-                        peer.destroy();
-                    } else if (err.type === 'network') {
-                        setStatus("Network connection lost.");
-                    } else {
-                        setStatus("Secure Connection Error. Retrying...");
+                    if (loadingRef.current) {
+                        if (err.type === 'peer-unavailable') {
+                            setIsLoading(false);
+                            setStatus(`Hub ID '${targetRoomId}' invalid or offline.`);
+                            peer.destroy();
+                        } else if (err.type === 'network') {
+                            setStatus("Network connection lost.");
+                        } else {
+                            // Retry or specific error handling can go here
+                        }
                     }
                 });
 
@@ -255,65 +260,43 @@
             };
 
             const attemptConnection = (peer, targetId, nickname, code) => {
-                // Explicitly serialization: 'json' ensures compatibility
                 const conn = peer.connect(targetId, { serialization: 'json' });
-                setupConnection(conn, nickname, code);
                 
-                // Aggressive Connection Check
-                let attempts = 0;
-                const checkInterval = setInterval(() => {
-                    attempts++;
-                    if (conn.open) {
-                        clearInterval(checkInterval);
-                        return;
-                    }
-
-                    if (attempts >= 3) {
-                        // Connection didn't open in time
-                        clearInterval(checkInterval);
-                        if (isLoading) {
-                            console.log("Retrying connection...");
-                            conn.close();
-                            // Simple retry logic by creating a new connection
-                            const newConn = peer.connect(targetId, { serialization: 'json' });
-                            setupConnection(newConn, nickname, code);
-                        }
-                    }
-                }, 1500); // Check every 1.5s
-                
-                // Ultimate timeout
-                setTimeout(() => {
-                    if (isLoading && view === 'landing' && !conn.open) {
+                // Explicitly handle connection errors that might not bubble to peer
+                conn.on('error', (err) => {
+                    console.error("Conn Error:", err);
+                    if (loadingRef.current) {
+                        setStatus("Connection Error");
                         setIsLoading(false);
-                        setStatus("Connection timed out. Host may be offline.");
-                        setTimeout(() => setStatus(null), 5000);
-                        peer.destroy();
                     }
-                }, 10000);
+                });
+
+                setupConnection(conn, nickname, code);
+
+                // Safe Timeout Check using Ref
+                setTimeout(() => {
+                    if (loadingRef.current && !conn.open) {
+                        console.log("Connection timed out - Aborting");
+                        setIsLoading(false);
+                        setStatus("Host unreachable (Timeout). Check Room ID.");
+                        peer.destroy(); // Clean up partial connection
+                    }
+                }, 5000); 
             };
 
             const setupConnection = (conn, myNick, authCode) => {
-                conn.on('error', (err) => {
-                    console.error("Conn Error:", err);
-                });
-
                 conn.on('open', () => {
-                    // Send auth packet immediately upon connection
                     conn.send({ type: 'auth', name: myNick, code: authCode, isHost: user.isHost });
                 });
 
                 conn.on('data', (data) => {
                     // --- HOST LOGIC ---
                     if (data.type === 'auth') {
-                        // Verify Passcode
                         if (data.code !== (user.isHost ? roomData.code : authCode)) {
-                            conn.close(); // Invalid code, kick them
+                            conn.close(); 
                             return;
                         }
-                        
-                        // Auth Valid: Send Welcome back
                         conn.send({ type: 'welcome', roomName: roomData.name });
-
                         setConnectedPeers(prev => [...prev, { id: conn.peer, name: data.name, isHost: data.isHost }]);
                         connectionsRef.current[conn.peer] = conn;
                         addSystemMessage(`${data.name} joined.`);
@@ -322,22 +305,19 @@
 
                     // --- JOINER LOGIC ---
                     if (data.type === 'welcome') {
-                        // Access Granted
                         setRoomData(prev => ({ ...prev, name: data.roomName }));
                         setView('chat');
                         setIsLoading(false);
                     }
 
-                    // --- KICK LOGIC ---
                     if (data.type === 'kick') {
                         peerRef.current.destroy();
                         setView('landing');
                         setStatus("You were removed from the Hub.");
-                        setTimeout(() => setStatus(null), 5000);
                     }
 
-                    // --- SHARED LOGIC ---
                     if (data.type === 'chat') setMessages(prev => [...prev, data.payload]);
+                    
                     if (data.type === 'file') {
                         const blob = new Blob([data.payload.data], { type: data.payload.type });
                         const url = URL.createObjectURL(blob);
@@ -352,27 +332,30 @@
                 });
 
                 conn.on('close', () => {
-                    // If we were joining and got closed before welcome, it means Auth Failed
-                    if (isLoading && view === 'landing') {
+                    if (loadingRef.current && view === 'landing') {
                         setIsLoading(false);
                         setStatus("Access Denied: Invalid Passcode or Hub closed.");
-                        setTimeout(() => setStatus(null), 4000);
                         return;
                     }
-
                     setConnectedPeers(prev => prev.filter(p => p.id !== conn.peer));
                     delete connectionsRef.current[conn.peer];
-                    if (mediaRefs.current[conn.peer]) {
-                        mediaRefs.current[conn.peer].srcObject = null;
-                    }
+                    if (mediaRefs.current[conn.peer]) mediaRefs.current[conn.peer].srcObject = null;
                 });
+            };
+
+            const abortConnection = () => {
+                setIsLoading(false);
+                if (peerRef.current) {
+                    peerRef.current.destroy();
+                    peerRef.current = null;
+                }
+                setStatus("Connection Cancelled");
             };
 
             const kickUser = (peerId) => {
                 const conn = connectionsRef.current[peerId];
                 if (conn) {
                     conn.send({ type: 'kick' });
-                    // Give a tiny delay for message to send before closing
                     setTimeout(() => {
                         conn.close();
                         setConnectedPeers(prev => prev.filter(p => p.id !== peerId));
@@ -399,15 +382,11 @@
             };
 
             const updateMyStream = async (audio, video) => {
-                if (localStreamRef.current) {
-                    localStreamRef.current.getTracks().forEach(t => t.stop());
-                }
-
+                if (localStreamRef.current) localStreamRef.current.getTracks().forEach(t => t.stop());
                 if (!audio && !video) {
                     localStreamRef.current = null;
                     return;
                 }
-
                 const stream = await getLocalStream(audio, video);
                 if (stream) {
                     localStreamRef.current = stream;
@@ -525,14 +504,12 @@
 
             const createRoom = (e) => {
                 e.preventDefault();
-                setIsLoading(true); // Minimal load time for UX
+                setIsLoading(true); 
                 const fd = new FormData(e.target);
                 const rid = Math.random().toString(36).substring(2, 9).toUpperCase();
                 setRoomData({ id: rid, name: fd.get('roomName'), code: fd.get('roomCode') });
                 setUser({ name: fd.get('nickname'), isHost: true });
                 setConnectedPeers([{ name: fd.get('nickname'), isHost: true, self: true, id: rid }]);
-                
-                // Slight delay to allow UI to update state before initiating
                 setTimeout(() => initPeer(rid, fd.get('nickname')), 500);
             };
 
@@ -542,13 +519,10 @@
                 const fd = new FormData(e.target);
                 const rid = fd.get('roomId').toUpperCase();
                 const myId = 'v-' + Math.random().toString(36).substr(2, 4);
-                
                 setRoomData({ id: rid, name: 'Secure Hub', code: fd.get('roomCode') });
                 setUser({ name: fd.get('nickname'), isHost: false });
                 setConnectedPeers([{ name: fd.get('nickname'), isHost: false, self: true, id: myId }]);
-                
                 initPeer(myId, fd.get('nickname'), rid, fd.get('roomCode'));
-                // Do NOT setView('chat') here. Wait for 'welcome' message.
             };
 
             useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; }, [messages, isSharingScreen]);
@@ -589,7 +563,13 @@
                                         <div className="absolute inset-0 bg-slate-900/90 backdrop-blur-sm z-10 flex flex-col items-center justify-center text-center p-8">
                                             <Icon name="Loader" size={48} className="text-emerald-500 spinner mb-4" />
                                             <p className="text-emerald-400 font-bold tracking-widest uppercase text-xs mb-2">Locating Hub...</p>
-                                            <p className="text-slate-500 text-[10px] max-w-xs">Verifying credentials and establishing secure handshake.</p>
+                                            <p className="text-slate-500 text-[10px] max-w-xs mb-6">Verifying credentials and establishing secure handshake.</p>
+                                            <button 
+                                                onClick={abortConnection}
+                                                className="px-6 py-2 bg-red-500/10 border border-red-500/30 text-red-400 rounded-full text-xs font-bold hover:bg-red-500/20 transition-all uppercase tracking-widest"
+                                            >
+                                                Cancel
+                                            </button>
                                         </div>
                                     )}
                                     <h2 className="text-2xl font-bold mb-8 flex items-center gap-4 text-emerald-400"><Icon name="ShieldCheck" /> Join Hub</h2>
