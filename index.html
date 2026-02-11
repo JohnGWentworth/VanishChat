@@ -49,6 +49,18 @@
     <script type="text/babel">
         const { useState, useEffect, useRef } = React;
 
+        // --- CONFIGURATION ---
+        // STUN servers are required for peers to connect across different networks (NAT traversal)
+        const PEER_CONFIG = {
+            debug: 1,
+            config: {
+                iceServers: [
+                    { urls: 'stun:stun.l.google.com:19302' },
+                    { urls: 'stun:global.stun.twilio.com:3478' }
+                ]
+            }
+        };
+
         // --- HARDCODED ICONS (Guaranteed to load) ---
         const ICONS = {
             Ghost: <path d="M9 22l1-1 1 1 1-1 1 1 1-1 1 1-1-1-1 1-1-1-1 1-1-1-1 1-1-1-1 1-1-1V5a5 5 0 0 1 10 0v16zM9 10a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm6 0a2 2 0 1 0 0-4 2 2 0 0 0 0 4z" />,
@@ -200,7 +212,8 @@
 
             // --- PEERJS LOGIC ---
             const initPeer = (myId, nickname, targetRoomId = null, joinCode = null) => {
-                const peer = new Peer(myId);
+                // Initialize with Google STUN servers for NAT traversal
+                const peer = new Peer(myId, PEER_CONFIG);
                 peerRef.current = peer;
 
                 // Handle Hub Not Found Error
@@ -211,23 +224,29 @@
                         setTimeout(() => setStatus(null), 4000);
                         peer.destroy();
                     } else {
-                        setStatus("Connection Error: " + err.type);
+                        // Generic error - likely connection dropped or ICE failed
+                        console.error(err);
                     }
                 });
 
                 peer.on('open', (id) => {
                     if (targetRoomId) {
-                        const conn = peer.connect(targetRoomId);
+                        // Connect to Host with Reliable Channel
+                        const conn = peer.connect(targetRoomId, { reliable: true });
                         setupConnection(conn, nickname, joinCode);
                         
-                        // Connection timeout fallback
+                        // Handshake Timeout - If Host doesn't respond in 8s
                         setTimeout(() => {
-                            if (!conn.open && isLoading) {
-                                setIsLoading(false);
-                                setStatus("Connection timed out. Host may be offline.");
-                                peer.destroy();
+                            if (isLoading && view === 'landing') { // Check if we are still stuck loading
+                                // Check connection state manually if possible or just timeout
+                                if(!conn.open) {
+                                    setIsLoading(false);
+                                    setStatus("Connection timed out. Host may be offline or blocked by firewall.");
+                                    setTimeout(() => setStatus(null), 5000);
+                                    peer.destroy();
+                                }
                             }
-                        }, 5000);
+                        }, 8000);
 
                     } else {
                         // Creating a room (Host) - Instant success
@@ -247,6 +266,12 @@
             };
 
             const setupConnection = (conn, myNick, authCode) => {
+                // Monitor connection errors specifically
+                conn.on('error', (err) => {
+                    console.error("Connection Error:", err);
+                    if(isLoading) setStatus("Data connection failed.");
+                });
+
                 conn.on('open', () => {
                     // Send auth packet immediately upon connection
                     conn.send({ type: 'auth', name: myNick, code: authCode, isHost: user.isHost });
