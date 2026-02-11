@@ -38,6 +38,9 @@
             background: #475569;
             border-radius: 2px;
         }
+        /* Spinner Animation */
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .spinner { animation: spin 1s linear infinite; }
     </style>
 </head>
 <body>
@@ -70,11 +73,12 @@
             Video: <><polygon points="23 7 16 12 23 17 23 7" /><rect x="1" y="5" width="15" height="14" rx="2" ry="2" /></>,
             VideoOff: <><path d="M16 16v1a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h2" /><line x1="2" y1="2" x2="22" y2="22" /></>,
             UserPlus: <><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="8.5" cy="7" r="4" /><line x1="20" y1="8" x2="20" y2="14" /><line x1="23" y1="11" x2="17" y2="11" /></>,
-            Check: <polyline points="20 6 9 17 4 12" />
+            Check: <polyline points="20 6 9 17 4 12" />,
+            Loader: <path d="M21 12a9 9 0 1 1-6.219-8.56" />
         };
 
         const Icon = ({ name, size = 20, className = "" }) => {
-            const content = ICONS[name] || ICONS['Ghost']; // Fallback to Ghost if missing
+            const content = ICONS[name] || ICONS['Ghost']; 
             return (
                 <svg 
                     xmlns="http://www.w3.org/2000/svg" 
@@ -92,8 +96,6 @@
                 </svg>
             );
         };
-
-        // --- COMPONENTS ---
 
         const SecurityModal = ({ onClose }) => (
             <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
@@ -163,6 +165,7 @@
             const [showSecurity, setShowSecurity] = useState(false);
             const [inviteCopied, setInviteCopied] = useState(false);
             const [prefillRoomId, setPrefillRoomId] = useState('');
+            const [isLoading, setIsLoading] = useState(false);
             
             // Audio Controls State
             const [volume, setVolume] = useState(1);
@@ -172,12 +175,11 @@
             const localStreamRef = useRef(null);
             const screenStreamRef = useRef(null);
             const scrollRef = useRef(null);
-            const videoRef = useRef(null); // For screen share
+            const videoRef = useRef(null);
             const fileInputRef = useRef(null);
             const connectionsRef = useRef({});
-            const mediaRefs = useRef({}); // Store references to video elements in sidebar
+            const mediaRefs = useRef({});
 
-            // --- ON MOUNT: CHECK FOR INVITE LINK ---
             useEffect(() => {
                 const params = new URLSearchParams(window.location.search);
                 const roomIdParam = params.get('room');
@@ -186,13 +188,11 @@
                 }
             }, []);
 
-            // --- AUDIO/VIDEO MANAGEMENT EFFECT ---
             useEffect(() => {
-                // Update volume for all peer media elements
                 Object.values(mediaRefs.current).forEach(el => {
                     if (el) {
                         el.volume = volume;
-                        el.muted = isDeafened || (el.dataset.self === "true"); // Always mute self to prevent feedback
+                        el.muted = isDeafened || (el.dataset.self === "true");
                     }
                 });
             }, [volume, isDeafened, connectedPeers]);
@@ -202,10 +202,36 @@
                 const peer = new Peer(myId);
                 peerRef.current = peer;
 
+                // Handle Hub Not Found Error
+                peer.on('error', (err) => {
+                    if (err.type === 'peer-unavailable') {
+                        setIsLoading(false);
+                        setStatus(`Hub ID '${targetRoomId}' not found.`);
+                        setTimeout(() => setStatus(null), 4000);
+                        peer.destroy();
+                    } else {
+                        setStatus("Connection Error: " + err.type);
+                    }
+                });
+
                 peer.on('open', (id) => {
                     if (targetRoomId) {
                         const conn = peer.connect(targetRoomId);
                         setupConnection(conn, nickname, joinCode);
+                        
+                        // Connection timeout fallback
+                        setTimeout(() => {
+                            if (!conn.open && isLoading) {
+                                setIsLoading(false);
+                                setStatus("Connection timed out. Host may be offline.");
+                                peer.destroy();
+                            }
+                        }, 5000);
+
+                    } else {
+                        // Creating a room (Host) - Instant success
+                        setView('chat');
+                        setIsLoading(false);
                     }
                 });
 
@@ -214,33 +240,46 @@
                 peer.on('call', (call) => {
                     if (connectionsRef.current[call.peer]) {
                         call.answer(localStreamRef.current);
-                        // Attach incoming stream to the sidebar video element
                         call.on('stream', (s) => handleRemoteStream(s, call.peer));
                     }
                 });
-
-                peer.on('error', () => setStatus("Connection Failed."));
             };
 
             const setupConnection = (conn, myNick, authCode) => {
                 conn.on('open', () => {
+                    // Send auth packet immediately upon connection
                     conn.send({ type: 'auth', name: myNick, code: authCode, isHost: user.isHost });
                 });
 
                 conn.on('data', (data) => {
+                    // --- HOST LOGIC ---
                     if (data.type === 'auth') {
+                        // Verify Passcode
                         if (data.code !== (user.isHost ? roomData.code : authCode)) {
-                            conn.close();
+                            conn.close(); // Invalid code, kick them
                             return;
                         }
+                        
+                        // Auth Valid: Send Welcome back
+                        conn.send({ type: 'welcome', roomName: roomData.name });
+
                         setConnectedPeers(prev => [...prev, { id: conn.peer, name: data.name, isHost: data.isHost }]);
                         connectionsRef.current[conn.peer] = conn;
                         addSystemMessage(`${data.name} joined.`);
                         if (localStreamRef.current) peerRef.current.call(conn.peer, localStreamRef.current);
                     }
+
+                    // --- JOINER LOGIC ---
+                    if (data.type === 'welcome') {
+                        // Access Granted
+                        setRoomData(prev => ({ ...prev, name: data.roomName }));
+                        setView('chat');
+                        setIsLoading(false);
+                    }
+
+                    // --- SHARED LOGIC ---
                     if (data.type === 'chat') setMessages(prev => [...prev, data.payload]);
                     if (data.type === 'file') {
-                        // Reconstruct Blob from ArrayBuffer
                         const blob = new Blob([data.payload.data], { type: data.payload.type });
                         const url = URL.createObjectURL(blob);
                         const msg = { 
@@ -254,9 +293,16 @@
                 });
 
                 conn.on('close', () => {
+                    // If we were joining and got closed before welcome, it means Auth Failed
+                    if (isLoading && view === 'landing') {
+                        setIsLoading(false);
+                        setStatus("Access Denied: Invalid Passcode or Hub closed.");
+                        setTimeout(() => setStatus(null), 4000);
+                        return;
+                    }
+
                     setConnectedPeers(prev => prev.filter(p => p.id !== conn.peer));
                     delete connectionsRef.current[conn.peer];
-                    // Cleanup media
                     if (mediaRefs.current[conn.peer]) {
                         mediaRefs.current[conn.peer].srcObject = null;
                     }
@@ -271,8 +317,6 @@
                 }
             };
 
-            // --- MEDIA CONTROLS ---
-
             const getLocalStream = async (audio, video) => {
                 try {
                     const stream = await navigator.mediaDevices.getUserMedia({ audio, video });
@@ -284,30 +328,24 @@
             };
 
             const updateMyStream = async (audio, video) => {
-                // Stop existing tracks
                 if (localStreamRef.current) {
                     localStreamRef.current.getTracks().forEach(t => t.stop());
                 }
 
                 if (!audio && !video) {
                     localStreamRef.current = null;
-                    // Update peers that we stopped
                     return;
                 }
 
                 const stream = await getLocalStream(audio, video);
                 if (stream) {
                     localStreamRef.current = stream;
-                    
-                    // Show my own video in sidebar
                     const myId = connectedPeers.find(p => p.self)?.id;
                     if (myId && mediaRefs.current[myId]) {
                         mediaRefs.current[myId].srcObject = stream;
-                        mediaRefs.current[myId].muted = true; // Mute self
+                        mediaRefs.current[myId].muted = true;
                         mediaRefs.current[myId].play();
                     }
-
-                    // Update all existing calls
                     connectedPeers.forEach(p => { 
                         if(!p.self) {
                            const call = peerRef.current.call(p.id, stream);
@@ -341,7 +379,6 @@
                         const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
                         screenStreamRef.current = stream;
                         setIsSharingScreen(true);
-                        
                         stream.getVideoTracks()[0].onended = () => {
                             setIsSharingScreen(false);
                             screenStreamRef.current = null;
@@ -350,15 +387,12 @@
                 }
             };
 
-            // Watch for screen share video stream availability
             useEffect(() => {
                 if (isSharingScreen && screenStreamRef.current && videoRef.current) {
                     videoRef.current.srcObject = screenStreamRef.current;
                     videoRef.current.play().catch(e => console.log("Video autoplay blocked"));
                 }
             }, [isSharingScreen]);
-
-            // --- MESSAGING & FILES & INVITES ---
 
             const sendMessage = (e) => {
                 e.preventDefault();
@@ -372,30 +406,23 @@
             const handleFileSelect = async (e) => {
                 const file = e.target.files[0];
                 if (!file) return;
-                
-                // Limit to 2MB for stability in P2P RAM transfer
                 if (file.size > 2 * 1024 * 1024) {
                     setStatus("File too large (>2MB)");
                     setTimeout(() => setStatus(null), 3000);
                     return;
                 }
-
                 const reader = new FileReader();
                 reader.onload = (evt) => {
                     const arrayBuffer = evt.target.result;
                     const blob = new Blob([arrayBuffer], { type: file.type });
                     const url = URL.createObjectURL(blob);
-                    
                     const msg = { 
                         id: Date.now(), 
                         user: user.name, 
                         file: { name: file.name, url, size: file.size }, 
                         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) 
                     };
-                    
                     setMessages(prev => [...prev, msg]);
-                    
-                    // Send file data
                     Object.values(connectionsRef.current).forEach(c => {
                         c.send({ 
                             type: 'file', 
@@ -409,8 +436,6 @@
             const copyInvite = () => {
                 const url = `${window.location.origin}${window.location.pathname}?room=${roomData.id}`;
                 const text = `Join me on VanishChat.\nRoom ID: ${roomData.id}\nLink: ${url}\n(Ask me for the passcode)`;
-                
-                // Fallback copy method
                 const textArea = document.createElement("textarea");
                 textArea.value = text;
                 document.body.appendChild(textArea);
@@ -429,25 +454,30 @@
 
             const createRoom = (e) => {
                 e.preventDefault();
+                setIsLoading(true); // Minimal load time for UX
                 const fd = new FormData(e.target);
                 const rid = Math.random().toString(36).substring(2, 9).toUpperCase();
                 setRoomData({ id: rid, name: fd.get('roomName'), code: fd.get('roomCode') });
                 setUser({ name: fd.get('nickname'), isHost: true });
                 setConnectedPeers([{ name: fd.get('nickname'), isHost: true, self: true, id: rid }]);
-                initPeer(rid, fd.get('nickname'));
-                setView('chat');
+                
+                // Slight delay to allow UI to update state before initiating
+                setTimeout(() => initPeer(rid, fd.get('nickname')), 500);
             };
 
             const joinRoom = (e) => {
                 e.preventDefault();
+                setIsLoading(true);
                 const fd = new FormData(e.target);
                 const rid = fd.get('roomId').toUpperCase();
                 const myId = 'v-' + Math.random().toString(36).substr(2, 4);
+                
                 setRoomData({ id: rid, name: 'Secure Hub', code: fd.get('roomCode') });
                 setUser({ name: fd.get('nickname'), isHost: false });
                 setConnectedPeers([{ name: fd.get('nickname'), isHost: false, self: true, id: myId }]);
+                
                 initPeer(myId, fd.get('nickname'), rid, fd.get('roomCode'));
-                setView('chat');
+                // Do NOT setView('chat') here. Wait for 'welcome' message.
             };
 
             useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; }, [messages, isSharingScreen]);
@@ -457,6 +487,9 @@
                     {showSecurity && <SecurityModal onClose={() => setShowSecurity(false)} />}
                     <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileSelect} />
                     
+                    {/* Floating Status Toast */}
+                    {status && <div className="fixed bottom-10 left-1/2 -translate-x-1/2 bg-red-600 text-white px-6 py-3 rounded-full text-xs font-black shadow-2xl flex items-center gap-3 animate-bounce z-[100] uppercase tracking-widest border border-red-500"><Icon name="ShieldAlert" size={16} /> {status}</div>}
+
                     {view === 'landing' ? (
                         <div className="max-w-5xl mx-auto pt-24 px-6 pb-20 relative">
                             <div className="text-center mb-16">
@@ -465,7 +498,13 @@
                             </div>
 
                             <div className="grid md:grid-cols-2 gap-10">
-                                <div className="bg-slate-900 border border-slate-800 p-10 rounded-[3rem] shadow-2xl">
+                                <div className="bg-slate-900 border border-slate-800 p-10 rounded-[3rem] shadow-2xl relative overflow-hidden">
+                                    {isLoading && user.isHost && (
+                                        <div className="absolute inset-0 bg-slate-900/90 backdrop-blur-sm z-10 flex flex-col items-center justify-center">
+                                            <Icon name="Loader" size={48} className="text-indigo-500 spinner mb-4" />
+                                            <p className="text-indigo-400 font-bold tracking-widest uppercase text-xs">Initializing Secure Hub...</p>
+                                        </div>
+                                    )}
                                     <h2 className="text-2xl font-bold mb-8 flex items-center gap-4 text-indigo-400"><Icon name="Zap" /> Create Hub</h2>
                                     <form onSubmit={createRoom} className="space-y-4">
                                         <input required name="nickname" className="w-full bg-slate-800/50 border border-slate-700 rounded-2xl px-6 py-4 outline-none focus:ring-2 focus:ring-indigo-500 text-sm text-white" placeholder="Display Name" />
@@ -474,7 +513,14 @@
                                         <button className="w-full bg-indigo-600 hover:bg-indigo-500 py-5 rounded-2xl font-black transition-all text-white">START HUB</button>
                                     </form>
                                 </div>
-                                <div className="bg-slate-900 border border-slate-800 p-10 rounded-[3rem] shadow-2xl">
+                                <div className="bg-slate-900 border border-slate-800 p-10 rounded-[3rem] shadow-2xl relative overflow-hidden">
+                                    {isLoading && !user.isHost && (
+                                        <div className="absolute inset-0 bg-slate-900/90 backdrop-blur-sm z-10 flex flex-col items-center justify-center text-center p-8">
+                                            <Icon name="Loader" size={48} className="text-emerald-500 spinner mb-4" />
+                                            <p className="text-emerald-400 font-bold tracking-widest uppercase text-xs mb-2">Locating Hub...</p>
+                                            <p className="text-slate-500 text-[10px] max-w-xs">Verifying credentials and establishing secure handshake.</p>
+                                        </div>
+                                    )}
                                     <h2 className="text-2xl font-bold mb-8 flex items-center gap-4 text-emerald-400"><Icon name="ShieldCheck" /> Join Hub</h2>
                                     <form onSubmit={joinRoom} className="space-y-4">
                                         <input required name="nickname" className="w-full bg-slate-800/50 border border-slate-700 rounded-2xl px-6 py-4 outline-none focus:ring-2 focus:ring-emerald-500 text-sm text-white" placeholder="Display Name" />
@@ -625,7 +671,6 @@
                                             </div>
                                         ))}
                                     </div>
-                                    {status && <div className="absolute bottom-28 left-1/2 -translate-x-1/2 bg-red-600 text-white px-6 py-3 rounded-full text-xs font-black shadow-2xl flex items-center gap-3 animate-bounce z-50 uppercase tracking-widest border border-red-500"><Icon name="ShieldAlert" size={16} /> {status}</div>}
                                     <div className="p-8 border-t border-slate-800/50 bg-slate-900/20 backdrop-blur-2xl">
                                         <form onSubmit={sendMessage} className="max-w-4xl mx-auto flex gap-4">
                                             <button type="button" onClick={() => fileInputRef.current.click()} className="p-4 bg-slate-800 border border-slate-700 rounded-2xl hover:bg-slate-700 text-slate-400 hover:text-white transition-colors">
