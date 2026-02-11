@@ -28,18 +28,20 @@
     <script type="text/babel">
         const { useState, useEffect, useRef } = React;
 
-        // --- BASIC STABLE ICON COMPONENT ---
+        // --- FIXED ICON COMPONENT ---
         const Icon = ({ name, size = 20, className = "" }) => {
             const [svg, setSvg] = useState("");
 
             useEffect(() => {
                 const loadIcon = () => {
                     if (window.lucide && window.lucide.icons) {
-                        const iconData = window.lucide.icons[name] || 
-                                         window.lucide.icons[name.toLowerCase()] ||
-                                         window.lucide.icons[name.charAt(0).toUpperCase() + name.slice(1)];
+                        // FIX: Convert PascalCase (MicOff) to kebab-case (mic-off) for the library
+                        const kebabName = name.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
+                        
+                        const iconData = window.lucide.icons[kebabName] || 
+                                         window.lucide.icons[name.toLowerCase()] || 
+                                         window.lucide.icons[name];
 
-                        // Render SVG content
                         if (iconData && Array.isArray(iconData) && Array.isArray(iconData[2])) {
                             const paths = iconData[2].map((item) => {
                                 if (Array.isArray(item) && item.length >= 2) {
@@ -61,12 +63,12 @@
                 if (!loadIcon()) {
                     const timer = setInterval(() => {
                         if (loadIcon()) clearInterval(timer);
-                    }, 500); // Slower poll to avoid hammering
+                    }, 500); 
                     return () => clearInterval(timer);
                 }
             }, [name, size, className]);
 
-            return <span className="inline-flex items-center justify-center" dangerouslySetInnerHTML={{ __html: svg }} />;
+            return <span className="inline-flex items-center justify-center shrink-0" dangerouslySetInnerHTML={{ __html: svg }} />;
         };
 
         const App = () => {
@@ -160,17 +162,34 @@
 
             const toggleScreenShare = async () => {
                 if (isSharingScreen) {
-                    if (localStreamRef.current) localStreamRef.current.getTracks().forEach(t => t.stop());
+                    if (screenStreamRef.current) {
+                        screenStreamRef.current.getTracks().forEach(t => t.stop());
+                        screenStreamRef.current = null;
+                    }
                     setIsSharingScreen(false);
                 } else {
                     try {
                         const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
-                        if (videoRef.current) videoRef.current.srcObject = stream;
-                        setIsSharingScreen(true);
-                        stream.getVideoTracks()[0].onended = () => setIsSharingScreen(false);
+                        screenStreamRef.current = stream;
+                        setIsSharingScreen(true); // Triggers re-render
+                        
+                        // Listen for browser "Stop Sharing" button
+                        stream.getVideoTracks()[0].onended = () => {
+                            setIsSharingScreen(false);
+                            screenStreamRef.current = null;
+                        };
                     } catch (e) { setStatus("Share Cancelled"); }
                 }
             };
+
+            // FIX: Watch for screen share state changes to attach video stream
+            useEffect(() => {
+                if (isSharingScreen && screenStreamRef.current && videoRef.current) {
+                    videoRef.current.srcObject = screenStreamRef.current;
+                    // Play is required after setting srcObject
+                    videoRef.current.play().catch(e => console.error("Video play failed:", e));
+                }
+            }, [isSharingScreen]);
 
             const sendMessage = (e) => {
                 e.preventDefault();
@@ -273,14 +292,16 @@
                                             <span className="text-[9px] text-slate-500 uppercase font-black">{u.self ? 'You' : 'Member'}</span>
                                         </div>
                                         {u.self && (
-                                            <button onClick={toggleMic} className={`p-2.5 rounded-2xl transition-all ${isMicOn ? 'bg-indigo-500 text-white shadow-lg' : 'bg-slate-700 text-slate-500 hover:text-slate-400'}`}><Icon name={isMicOn ? "Mic" : "MicOff"} size={16} /></button>
+                                            <button onClick={toggleMic} className={`p-2.5 rounded-2xl transition-all ${isMicOn ? 'bg-indigo-500 text-white shadow-lg' : 'bg-slate-700 text-slate-500 hover:text-slate-400'}`}>
+                                                <Icon name={isMicOn ? "Mic" : "MicOff"} size={16} />
+                                            </button>
                                         )}
                                     </div>
                                 ))}
                             </div>
                         </aside>
                         <main className="flex-1 flex flex-col bg-slate-950 relative">
-                            {isSharingScreen && <div className="h-2/3 bg-black p-6 shrink-0"><video ref={videoRef} autoPlay playsInline className="w-full h-full object-contain rounded-[2.5rem] border border-slate-800 shadow-2xl" /></div>}
+                            {isSharingScreen && <div className="h-2/3 bg-black p-6 shrink-0"><video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-contain rounded-[2.5rem] border border-slate-800 shadow-2xl" /></div>}
                             <div ref={scrollRef} className="flex-1 overflow-y-auto p-10 space-y-6 custom-scrollbar">
                                 {messages.length === 0 && (
                                     <div className="flex flex-col items-center justify-center h-full opacity-10 select-none grayscale">
