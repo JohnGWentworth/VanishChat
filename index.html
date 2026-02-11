@@ -50,12 +50,14 @@
         const { useState, useEffect, useRef } = React;
 
         // --- CONFIGURATION ---
-        // STUN servers are required for peers to connect across different networks (NAT traversal)
+        // Robust ICE Server list for better NAT traversal
         const PEER_CONFIG = {
-            debug: 1,
+            debug: 1, // 0: None, 1: Errors, 2: Warnings, 3: All
             config: {
                 iceServers: [
                     { urls: 'stun:stun.l.google.com:19302' },
+                    { urls: 'stun:stun1.l.google.com:19302' },
+                    { urls: 'stun:stun2.l.google.com:19302' },
                     { urls: 'stun:global.stun.twilio.com:3478' }
                 ]
             }
@@ -179,6 +181,7 @@
             const [inviteCopied, setInviteCopied] = useState(false);
             const [prefillRoomId, setPrefillRoomId] = useState('');
             const [isLoading, setIsLoading] = useState(false);
+            const [retryCount, setRetryCount] = useState(0);
             
             // Audio Controls State
             const [volume, setVolume] = useState(1);
@@ -212,42 +215,28 @@
 
             // --- PEERJS LOGIC ---
             const initPeer = (myId, nickname, targetRoomId = null, joinCode = null) => {
-                // Initialize with Google STUN servers for NAT traversal
+                // Initialize with robust STUN servers
                 const peer = new Peer(myId, PEER_CONFIG);
                 peerRef.current = peer;
 
-                // Handle Hub Not Found Error
+                // Handle Hub Not Found or Connection Errors
                 peer.on('error', (err) => {
+                    console.error("Peer Error:", err);
                     if (err.type === 'peer-unavailable') {
                         setIsLoading(false);
-                        setStatus(`Hub ID '${targetRoomId}' not found.`);
+                        setStatus(`Hub ID '${targetRoomId}' invalid or offline.`);
                         setTimeout(() => setStatus(null), 4000);
                         peer.destroy();
+                    } else if (err.type === 'network') {
+                        setStatus("Network connection lost.");
                     } else {
-                        // Generic error - likely connection dropped or ICE failed
-                        console.error(err);
+                        setStatus("Secure Connection Error. Retrying...");
                     }
                 });
 
                 peer.on('open', (id) => {
                     if (targetRoomId) {
-                        // Connect to Host with Reliable Channel
-                        const conn = peer.connect(targetRoomId, { reliable: true });
-                        setupConnection(conn, nickname, joinCode);
-                        
-                        // Handshake Timeout - If Host doesn't respond in 8s
-                        setTimeout(() => {
-                            if (isLoading && view === 'landing') { // Check if we are still stuck loading
-                                // Check connection state manually if possible or just timeout
-                                if(!conn.open) {
-                                    setIsLoading(false);
-                                    setStatus("Connection timed out. Host may be offline or blocked by firewall.");
-                                    setTimeout(() => setStatus(null), 5000);
-                                    peer.destroy();
-                                }
-                            }
-                        }, 8000);
-
+                        attemptConnection(peer, targetRoomId, nickname, joinCode);
                     } else {
                         // Creating a room (Host) - Instant success
                         setView('chat');
@@ -265,11 +254,47 @@
                 });
             };
 
+            const attemptConnection = (peer, targetId, nickname, code) => {
+                // Explicitly serialization: 'json' ensures compatibility
+                const conn = peer.connect(targetId, { serialization: 'json' });
+                setupConnection(conn, nickname, code);
+                
+                // Aggressive Connection Check
+                let attempts = 0;
+                const checkInterval = setInterval(() => {
+                    attempts++;
+                    if (conn.open) {
+                        clearInterval(checkInterval);
+                        return;
+                    }
+
+                    if (attempts >= 3) {
+                        // Connection didn't open in time
+                        clearInterval(checkInterval);
+                        if (isLoading) {
+                            console.log("Retrying connection...");
+                            conn.close();
+                            // Simple retry logic by creating a new connection
+                            const newConn = peer.connect(targetId, { serialization: 'json' });
+                            setupConnection(newConn, nickname, code);
+                        }
+                    }
+                }, 1500); // Check every 1.5s
+                
+                // Ultimate timeout
+                setTimeout(() => {
+                    if (isLoading && view === 'landing' && !conn.open) {
+                        setIsLoading(false);
+                        setStatus("Connection timed out. Host may be offline.");
+                        setTimeout(() => setStatus(null), 5000);
+                        peer.destroy();
+                    }
+                }, 10000);
+            };
+
             const setupConnection = (conn, myNick, authCode) => {
-                // Monitor connection errors specifically
                 conn.on('error', (err) => {
-                    console.error("Connection Error:", err);
-                    if(isLoading) setStatus("Data connection failed.");
+                    console.error("Conn Error:", err);
                 });
 
                 conn.on('open', () => {
