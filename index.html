@@ -10,8 +10,6 @@
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <!-- Lucide Icons -->
-    <script src="https://unpkg.com/lucide@latest"></script>
     <!-- PeerJS -->
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
@@ -28,47 +26,43 @@
     <script type="text/babel">
         const { useState, useEffect, useRef } = React;
 
-        // --- FIXED ICON COMPONENT ---
+        // --- HARDCODED ICONS (Guaranteed to load) ---
+        // Fixed: Wrapped multi-element icons in fragments <>...</>
+        const ICONS = {
+            Ghost: <path d="M9 22l1-1 1 1 1-1 1 1 1-1 1 1-1-1-1 1-1-1-1 1-1-1-1 1-1-1-1 1-1-1V5a5 5 0 0 1 10 0v16zM9 10a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm6 0a2 2 0 1 0 0-4 2 2 0 0 0 0 4z" />,
+            Zap: <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />,
+            ShieldCheck: <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10zM9 12l2 2 4-4" />,
+            Mic: <><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" /><path d="M19 10v2a7 7 0 0 1-14 0v-2" /><line x1="12" y1="19" x2="12" y2="23" /><line x1="8" y1="23" x2="16" y2="23" /></>,
+            MicOff: <><line x1="1" y1="1" x2="23" y2="23" /><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6" /><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23" /><line x1="12" y1="19" x2="12" y2="23" /><line x1="8" y1="23" x2="16" y2="23" /></>,
+            Monitor: <><rect x="2" y="3" width="20" height="14" rx="2" ry="2" /><line x1="8" y1="21" x2="16" y2="21" /><line x1="12" y1="17" x2="12" y2="21" /></>,
+            MonitorOff: <><path d="M2 3l20 18" /><path d="M22 3v14a2 2 0 0 1-2 2H4" /><path d="M2 17V5a2 2 0 0 1 2-2h14" /><line x1="8" y1="21" x2="16" y2="21" /><line x1="12" y1="17" x2="12" y2="21" /></>,
+            LogOut: <><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" /></>,
+            Lock: <><rect x="3" y="11" width="18" height="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></>,
+            Unlock: <><rect x="3" y="11" width="18" height="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 9.9-1" /></>,
+            Send: <><line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" /></>,
+            Copy: <><rect x="9" y="9" width="13" height="13" rx="2" ry="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></>,
+            ShieldAlert: <><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" /></>,
+            X: <><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></>
+        };
+
         const Icon = ({ name, size = 20, className = "" }) => {
-            const [svg, setSvg] = useState("");
-
-            useEffect(() => {
-                const loadIcon = () => {
-                    if (window.lucide && window.lucide.icons) {
-                        // FIX: Convert PascalCase (MicOff) to kebab-case (mic-off) for the library
-                        const kebabName = name.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
-                        
-                        const iconData = window.lucide.icons[kebabName] || 
-                                         window.lucide.icons[name.toLowerCase()] || 
-                                         window.lucide.icons[name];
-
-                        if (iconData && Array.isArray(iconData) && Array.isArray(iconData[2])) {
-                            const paths = iconData[2].map((item) => {
-                                if (Array.isArray(item) && item.length >= 2) {
-                                    const tag = item[0];
-                                    const attrs = item[1];
-                                    const attrStr = Object.entries(attrs).map(([k, v]) => `${k}="${v}"`).join(' ');
-                                    return `<${tag} ${attrStr}></${tag}>`;
-                                }
-                                return '';
-                            }).join('');
-                            
-                            setSvg(`<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="${className}">${paths}</svg>`);
-                            return true;
-                        }
-                    }
-                    return false;
-                };
-
-                if (!loadIcon()) {
-                    const timer = setInterval(() => {
-                        if (loadIcon()) clearInterval(timer);
-                    }, 500); 
-                    return () => clearInterval(timer);
-                }
-            }, [name, size, className]);
-
-            return <span className="inline-flex items-center justify-center shrink-0" dangerouslySetInnerHTML={{ __html: svg }} />;
+            const content = ICONS[name] || ICONS['Ghost']; // Fallback to Ghost if missing
+            return (
+                <svg 
+                    xmlns="http://www.w3.org/2000/svg" 
+                    width={size} 
+                    height={size} 
+                    viewBox="0 0 24 24" 
+                    fill="none" 
+                    stroke="currentColor" 
+                    strokeWidth="2" 
+                    strokeLinecap="round" 
+                    strokeLinejoin="round" 
+                    className={className}
+                >
+                    {content}
+                </svg>
+            );
         };
 
         const App = () => {
@@ -171,9 +165,8 @@
                     try {
                         const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
                         screenStreamRef.current = stream;
-                        setIsSharingScreen(true); // Triggers re-render
+                        setIsSharingScreen(true);
                         
-                        // Listen for browser "Stop Sharing" button
                         stream.getVideoTracks()[0].onended = () => {
                             setIsSharingScreen(false);
                             screenStreamRef.current = null;
@@ -182,12 +175,11 @@
                 }
             };
 
-            // FIX: Watch for screen share state changes to attach video stream
+            // Watch for video stream availability
             useEffect(() => {
                 if (isSharingScreen && screenStreamRef.current && videoRef.current) {
                     videoRef.current.srcObject = screenStreamRef.current;
-                    // Play is required after setting srcObject
-                    videoRef.current.play().catch(e => console.error("Video play failed:", e));
+                    videoRef.current.play().catch(e => console.log("Video autoplay blocked"));
                 }
             }, [isSharingScreen]);
 
@@ -274,7 +266,7 @@
                         </div>
                         <div className="flex gap-4 items-center">
                             <button onClick={toggleScreenShare} className={`px-5 py-2.5 rounded-xl text-[10px] font-black tracking-widest border transition-all ${isSharingScreen ? 'bg-amber-500/10 border-amber-500/20 text-amber-400' : 'bg-slate-800 border-slate-700 hover:bg-slate-700'}`}>
-                                {isSharingScreen ? "STOP SHARING" : "SHARE SCREEN"}
+                                {isSharingScreen ? <><Icon name="MonitorOff" size={14} className="mr-2" /> STOP</> : <><Icon name="Monitor" size={14} className="mr-2" /> SHARE</>}
                             </button>
                             <button onClick={() => window.location.reload()} className="flex items-center gap-2 px-5 py-2.5 bg-red-500/10 text-red-400 rounded-xl border border-red-500/20 hover:bg-red-500/20 font-black text-[10px] tracking-widest">
                                 <Icon name="LogOut" size={14} /> EXIT
@@ -293,7 +285,7 @@
                                         </div>
                                         {u.self && (
                                             <button onClick={toggleMic} className={`p-2.5 rounded-2xl transition-all ${isMicOn ? 'bg-indigo-500 text-white shadow-lg' : 'bg-slate-700 text-slate-500 hover:text-slate-400'}`}>
-                                                <Icon name={isMicOn ? "Mic" : "MicOff"} size={16} />
+                                                {isMicOn ? <Icon name="Mic" size={16} /> : <Icon name="MicOff" size={16} />}
                                             </button>
                                         )}
                                     </div>
