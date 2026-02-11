@@ -64,7 +64,11 @@
             X: <><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></>,
             Headphones: <><path d="M3 18v-6a9 9 0 0 1 18 0v6" /><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z" /></>,
             Volume2: <><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" /><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07" /></>,
-            VolumeX: <><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" /><line x1="23" y1="9" x2="17" y2="15" /><line x1="17" y1="9" x2="23" y2="15" /></>
+            VolumeX: <><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" /><line x1="23" y1="9" x2="17" y2="15" /><line x1="17" y1="9" x2="23" y2="15" /></>,
+            Paperclip: <><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" /></>,
+            FileText: <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><line x1="16" y1="13" x2="8" y2="13" /><line x1="16" y1="17" x2="8" y2="17" /><polyline points="10 9 9 9 8 9" /></>,
+            Video: <><polygon points="23 7 16 12 23 17 23 7" /><rect x="1" y="5" width="15" height="14" rx="2" ry="2" /></>,
+            VideoOff: <><path d="M16 16v1a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h2" /><line x1="2" y1="2" x2="22" y2="22" /></>
         };
 
         const Icon = ({ name, size = 20, className = "" }) => {
@@ -150,6 +154,7 @@
             const [messages, setMessages] = useState([]);
             const [inputMessage, setInputMessage] = useState('');
             const [isMicOn, setIsMicOn] = useState(false);
+            const [isVideoOn, setIsVideoOn] = useState(false);
             const [isSharingScreen, setIsSharingScreen] = useState(false);
             const [connectedPeers, setConnectedPeers] = useState([]); 
             const [status, setStatus] = useState(null);
@@ -163,19 +168,21 @@
             const localStreamRef = useRef(null);
             const screenStreamRef = useRef(null);
             const scrollRef = useRef(null);
-            const videoRef = useRef(null);
+            const videoRef = useRef(null); // For screen share
+            const fileInputRef = useRef(null);
             const connectionsRef = useRef({});
-            const audioElementsRef = useRef({}); // Store active audio elements by Peer ID
+            const mediaRefs = useRef({}); // Store references to video elements in sidebar
 
-            // --- AUDIO MANAGEMENT EFFECT ---
+            // --- AUDIO/VIDEO MANAGEMENT EFFECT ---
             useEffect(() => {
-                Object.values(audioElementsRef.current).forEach(audio => {
-                    if (audio) {
-                        audio.volume = volume;
-                        audio.muted = isDeafened;
+                // Update volume for all peer media elements
+                Object.values(mediaRefs.current).forEach(el => {
+                    if (el) {
+                        el.volume = volume;
+                        el.muted = isDeafened || (el.dataset.self === "true"); // Always mute self to prevent feedback
                     }
                 });
-            }, [volume, isDeafened]);
+            }, [volume, isDeafened, connectedPeers]);
 
             // --- PEERJS LOGIC ---
             const initPeer = (myId, nickname, targetRoomId = null, joinCode = null) => {
@@ -194,8 +201,8 @@
                 peer.on('call', (call) => {
                     if (connectionsRef.current[call.peer]) {
                         call.answer(localStreamRef.current);
-                        // Pass call.peer to map audio to the user
-                        call.on('stream', (s) => playAudio(s, call.peer));
+                        // Attach incoming stream to the sidebar video element
+                        call.on('stream', (s) => handleRemoteStream(s, call.peer));
                     }
                 });
 
@@ -219,44 +226,95 @@
                         if (localStreamRef.current) peerRef.current.call(conn.peer, localStreamRef.current);
                     }
                     if (data.type === 'chat') setMessages(prev => [...prev, data.payload]);
+                    if (data.type === 'file') {
+                        // Reconstruct Blob from ArrayBuffer
+                        const blob = new Blob([data.payload.data], { type: data.payload.type });
+                        const url = URL.createObjectURL(blob);
+                        const msg = { 
+                            id: Date.now(), 
+                            user: data.payload.user, 
+                            file: { name: data.payload.name, url, size: data.payload.size },
+                            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                        };
+                        setMessages(prev => [...prev, msg]);
+                    }
                 });
 
                 conn.on('close', () => {
                     setConnectedPeers(prev => prev.filter(p => p.id !== conn.peer));
                     delete connectionsRef.current[conn.peer];
-                    
-                    // Cleanup Audio
-                    if (audioElementsRef.current[conn.peer]) {
-                        audioElementsRef.current[conn.peer].pause();
-                        audioElementsRef.current[conn.peer].srcObject = null;
-                        delete audioElementsRef.current[conn.peer];
+                    // Cleanup media
+                    if (mediaRefs.current[conn.peer]) {
+                        mediaRefs.current[conn.peer].srcObject = null;
                     }
                 });
             };
 
-            const playAudio = (stream, peerId) => {
-                const audio = new Audio();
-                audio.srcObject = stream;
-                audio.volume = volume;
-                audio.muted = isDeafened;
-                audio.play();
-                audioElementsRef.current[peerId] = audio;
+            const handleRemoteStream = (stream, peerId) => {
+                const videoEl = mediaRefs.current[peerId];
+                if (videoEl) {
+                    videoEl.srcObject = stream;
+                    videoEl.play().catch(e => console.error("Auto-play prevented", e));
+                }
             };
 
-            const toggleMic = async () => {
-                if (isMicOn) {
-                    if (localStreamRef.current) localStreamRef.current.getTracks().forEach(t => t.stop());
-                    localStreamRef.current = null;
-                    setIsMicOn(false);
-                } else {
-                    try {
-                        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                        localStreamRef.current = stream;
-                        setIsMicOn(true);
-                        setStatus(null);
-                        connectedPeers.forEach(p => { if(!p.self) peerRef.current.call(p.id, stream); });
-                    } catch (e) { setStatus("Mic Access Denied"); }
+            // --- MEDIA CONTROLS ---
+
+            const getLocalStream = async (audio, video) => {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio, video });
+                    return stream;
+                } catch (e) {
+                    setStatus("Device Access Denied");
+                    return null;
                 }
+            };
+
+            const updateMyStream = async (audio, video) => {
+                // Stop existing tracks
+                if (localStreamRef.current) {
+                    localStreamRef.current.getTracks().forEach(t => t.stop());
+                }
+
+                if (!audio && !video) {
+                    localStreamRef.current = null;
+                    // Update peers that we stopped
+                    return;
+                }
+
+                const stream = await getLocalStream(audio, video);
+                if (stream) {
+                    localStreamRef.current = stream;
+                    
+                    // Show my own video in sidebar
+                    const myId = connectedPeers.find(p => p.self)?.id;
+                    if (myId && mediaRefs.current[myId]) {
+                        mediaRefs.current[myId].srcObject = stream;
+                        mediaRefs.current[myId].muted = true; // Mute self
+                        mediaRefs.current[myId].play();
+                    }
+
+                    // Update all existing calls (replaceTrack is complex, easiest to re-call for this simple app)
+                    // Note: In production, use replaceTrack. Here we re-call to ensure video connects.
+                    connectedPeers.forEach(p => { 
+                        if(!p.self) {
+                           const call = peerRef.current.call(p.id, stream);
+                           call.on('stream', (s) => handleRemoteStream(s, p.id));
+                        }
+                    });
+                }
+            };
+
+            const toggleMic = () => {
+                const newMicState = !isMicOn;
+                setIsMicOn(newMicState);
+                updateMyStream(newMicState, isVideoOn);
+            };
+
+            const toggleVideo = () => {
+                const newVideoState = !isVideoOn;
+                setIsVideoOn(newVideoState);
+                updateMyStream(isMicOn, newVideoState);
             };
 
             const toggleScreenShare = async () => {
@@ -280,13 +338,15 @@
                 }
             };
 
-            // Watch for video stream availability
+            // Watch for screen share video stream availability
             useEffect(() => {
                 if (isSharingScreen && screenStreamRef.current && videoRef.current) {
                     videoRef.current.srcObject = screenStreamRef.current;
                     videoRef.current.play().catch(e => console.log("Video autoplay blocked"));
                 }
             }, [isSharingScreen]);
+
+            // --- MESSAGING & FILES ---
 
             const sendMessage = (e) => {
                 e.preventDefault();
@@ -295,6 +355,43 @@
                 setMessages(prev => [...prev, msg]);
                 Object.values(connectionsRef.current).forEach(c => c.send({ type: 'chat', payload: msg }));
                 setInputMessage('');
+            };
+
+            const handleFileSelect = async (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                
+                // Limit to 2MB for stability in P2P RAM transfer
+                if (file.size > 2 * 1024 * 1024) {
+                    setStatus("File too large (>2MB)");
+                    setTimeout(() => setStatus(null), 3000);
+                    return;
+                }
+
+                const reader = new FileReader();
+                reader.onload = (evt) => {
+                    const arrayBuffer = evt.target.result;
+                    const blob = new Blob([arrayBuffer], { type: file.type });
+                    const url = URL.createObjectURL(blob);
+                    
+                    const msg = { 
+                        id: Date.now(), 
+                        user: user.name, 
+                        file: { name: file.name, url, size: file.size }, 
+                        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) 
+                    };
+                    
+                    setMessages(prev => [...prev, msg]);
+                    
+                    // Send file data
+                    Object.values(connectionsRef.current).forEach(c => {
+                        c.send({ 
+                            type: 'file', 
+                            payload: { name: file.name, type: file.type, size: file.size, data: arrayBuffer, user: user.name } 
+                        });
+                    });
+                };
+                reader.readAsArrayBuffer(file);
             };
 
             const addSystemMessage = (text) => setMessages(prev => [...prev, { id: Date.now(), type: 'system', text }]);
@@ -327,6 +424,7 @@
             return (
                 <div className="h-full">
                     {showSecurity && <SecurityModal onClose={() => setShowSecurity(false)} />}
+                    <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileSelect} />
                     
                     {view === 'landing' ? (
                         <div className="max-w-5xl mx-auto pt-24 px-6 pb-20 relative">
@@ -412,20 +510,43 @@
                                 </div>
                             </header>
                             <div className="flex flex-1 overflow-hidden">
-                                <aside className="w-72 border-r border-slate-800 bg-slate-900/20 p-6 hidden md:flex flex-col shrink-0">
-                                    <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-6 flex items-center gap-3"><span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span> Team</h4>
-                                    <div className="space-y-3 flex-1 overflow-y-auto custom-scrollbar">
+                                <aside className="w-72 border-r border-slate-800 bg-slate-900/20 p-4 hidden md:flex flex-col shrink-0">
+                                    <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-4 flex items-center gap-3"><span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span> Team</h4>
+                                    <div className="space-y-4 flex-1 overflow-y-auto custom-scrollbar">
                                         {connectedPeers.map((u, i) => (
-                                            <div key={i} className="flex items-center justify-between p-4 bg-slate-800/40 border border-slate-800 rounded-3xl">
-                                                <div className="flex flex-col min-w-0">
-                                                    <span className="text-sm font-black truncate text-slate-200">{u.name} {u.isHost && '👑'}</span>
-                                                    <span className="text-[9px] text-slate-500 uppercase font-black">{u.self ? 'You' : 'Member'}</span>
+                                            <div key={i} className="bg-slate-800/40 border border-slate-800 rounded-2xl overflow-hidden relative group">
+                                                {/* Video Area */}
+                                                <div className="aspect-video bg-black relative">
+                                                    <video 
+                                                        ref={el => mediaRefs.current[u.id] = el}
+                                                        data-self={u.self}
+                                                        className="w-full h-full object-cover"
+                                                        autoPlay 
+                                                        playsInline
+                                                    />
+                                                    {/* Fallback Avatar Overlay (visible if video is transparent/off) */}
+                                                    <div className="absolute inset-0 flex items-center justify-center bg-slate-900 -z-10">
+                                                        <Icon name="Ghost" size={32} className="text-slate-700" />
+                                                    </div>
                                                 </div>
-                                                {u.self && (
-                                                    <button onClick={toggleMic} className={`p-2.5 rounded-2xl transition-all ${isMicOn ? 'bg-indigo-500 text-white shadow-lg' : 'bg-slate-700 text-slate-500 hover:text-slate-400'}`}>
-                                                        {isMicOn ? <Icon name="Mic" size={16} /> : <Icon name="MicOff" size={16} />}
-                                                    </button>
-                                                )}
+                                                
+                                                {/* Info Bar */}
+                                                <div className="p-3 flex items-center justify-between bg-slate-800/80 backdrop-blur-sm">
+                                                    <div className="flex flex-col min-w-0">
+                                                        <span className="text-xs font-bold truncate text-slate-200">{u.name} {u.isHost && '👑'}</span>
+                                                        <span className="text-[9px] text-slate-500 uppercase font-black">{u.self ? 'You' : 'Member'}</span>
+                                                    </div>
+                                                    {u.self && (
+                                                        <div className="flex gap-1">
+                                                             <button onClick={toggleVideo} className={`p-1.5 rounded-lg transition-all ${isVideoOn ? 'bg-indigo-500 text-white' : 'bg-slate-700 text-slate-400'}`}>
+                                                                <Icon name={isVideoOn ? "Video" : "VideoOff"} size={12} />
+                                                            </button>
+                                                            <button onClick={toggleMic} className={`p-1.5 rounded-lg transition-all ${isMicOn ? 'bg-indigo-500 text-white' : 'bg-red-500/20 text-red-400'}`}>
+                                                                <Icon name={isMicOn ? "Mic" : "MicOff"} size={12} />
+                                                            </button>
+                                                        </div>
+                                                    )}
+                                                </div>
                                             </div>
                                         ))}
                                     </div>
@@ -444,7 +565,23 @@
                                                 {m.type === 'system' ? <span className="text-[9px] bg-slate-800 px-4 py-1.5 rounded-full text-slate-500 border border-slate-700 uppercase tracking-widest font-black shadow-sm">{m.text}</span> :
                                                     <div className={`flex flex-col max-w-[70%] ${m.user === user.name ? 'items-end' : 'items-start'}`}>
                                                         <span className="text-[9px] text-slate-500 mb-1.5 px-3 font-black uppercase tracking-widest">{m.user} • {m.timestamp}</span>
-                                                        <div className={`p-5 rounded-[1.5rem] text-sm leading-relaxed ${m.user === user.name ? 'bg-indigo-600 text-white rounded-tr-none shadow-indigo-900/40' : 'bg-slate-900 text-slate-200 rounded-tl-none border border-slate-800 shadow-sm'}`}>{m.text}</div>
+                                                        
+                                                        {m.file ? (
+                                                            <div className={`p-4 rounded-[1.5rem] border flex items-center gap-4 ${m.user === user.name ? 'bg-indigo-900/40 border-indigo-500/30 text-indigo-100 rounded-tr-none' : 'bg-slate-900 border-slate-700 text-slate-200 rounded-tl-none'}`}>
+                                                                <div className="p-3 bg-slate-950 rounded-xl text-indigo-400">
+                                                                    <Icon name="FileText" size={24} />
+                                                                </div>
+                                                                <div className="flex-1 min-w-0">
+                                                                    <p className="font-bold text-sm truncate max-w-[200px]">{m.file.name}</p>
+                                                                    <p className="text-[10px] text-slate-500 uppercase font-mono">{(m.file.size / 1024).toFixed(1)} KB</p>
+                                                                </div>
+                                                                <a href={m.file.url} download={m.file.name} className="p-2 hover:bg-white/10 rounded-lg transition-colors" title="Download">
+                                                                    <Icon name="Copy" size={16} /> 
+                                                                </a>
+                                                            </div>
+                                                        ) : (
+                                                            <div className={`p-5 rounded-[1.5rem] text-sm leading-relaxed ${m.user === user.name ? 'bg-indigo-600 text-white rounded-tr-none shadow-indigo-900/40' : 'bg-slate-900 text-slate-200 rounded-tl-none border border-slate-800 shadow-sm'}`}>{m.text}</div>
+                                                        )}
                                                     </div>
                                                 }
                                             </div>
@@ -453,6 +590,9 @@
                                     {status && <div className="absolute bottom-28 left-1/2 -translate-x-1/2 bg-red-600 text-white px-6 py-3 rounded-full text-xs font-black shadow-2xl flex items-center gap-3 animate-bounce z-50 uppercase tracking-widest border border-red-500"><Icon name="ShieldAlert" size={16} /> {status}</div>}
                                     <div className="p-8 border-t border-slate-800/50 bg-slate-900/20 backdrop-blur-2xl">
                                         <form onSubmit={sendMessage} className="max-w-4xl mx-auto flex gap-4">
+                                            <button type="button" onClick={() => fileInputRef.current.click()} className="p-4 bg-slate-800 border border-slate-700 rounded-2xl hover:bg-slate-700 text-slate-400 hover:text-white transition-colors">
+                                                <Icon name="Paperclip" size={24} />
+                                            </button>
                                             <input value={inputMessage} onChange={e => setInputMessage(e.target.value)} className="flex-1 bg-slate-800/50 border border-slate-700/50 rounded-2xl px-6 py-4 outline-none focus:ring-2 focus:ring-indigo-500/50 font-medium text-sm text-slate-200" placeholder="Transmit secure message..." />
                                             <button type="submit" className="bg-indigo-600 p-4 rounded-2xl hover:bg-indigo-500 transition-all shadow-xl shadow-indigo-600/20 text-white"><Icon name="Send" size={24} /></button>
                                         </form>
