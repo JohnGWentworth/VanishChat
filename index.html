@@ -50,9 +50,8 @@
         const { useState, useEffect, useRef } = React;
 
         // --- CONFIGURATION ---
-        // Robust ICE Server list for better NAT traversal
         const PEER_CONFIG = {
-            debug: 1, // 0: None, 1: Errors, 2: Warnings, 3: All
+            debug: 1, 
             config: {
                 iceServers: [
                     { urls: 'stun:stun.l.google.com:19302' },
@@ -63,7 +62,7 @@
             }
         };
 
-        // --- HARDCODED ICONS (Guaranteed to load) ---
+        // --- HARDCODED ICONS ---
         const ICONS = {
             Ghost: <path d="M9 22l1-1 1 1 1-1 1 1 1-1 1 1-1-1-1 1-1-1-1 1-1-1-1 1-1-1-1 1-1-1V5a5 5 0 0 1 10 0v16zM9 10a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm6 0a2 2 0 1 0 0-4 2 2 0 0 0 0 4z" />,
             Zap: <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />,
@@ -182,8 +181,10 @@
             const [prefillRoomId, setPrefillRoomId] = useState('');
             const [isLoading, setIsLoading] = useState(false);
             
-            // Refs
-            const loadingRef = useRef(false); // Ref for immediate access in timeouts
+            // Refs - CRITICAL FIX FOR STALE CLOSURES
+            const loadingRef = useRef(false);
+            const roomDataRef = useRef(roomData);
+            const userRef = useRef(user);
             const peerRef = useRef(null);
             const localStreamRef = useRef(null);
             const screenStreamRef = useRef(null);
@@ -205,10 +206,18 @@
                 }
             }, []);
 
-            // Keep loadingRef in sync
+            // Sync Refs with State
             useEffect(() => {
                 loadingRef.current = isLoading;
             }, [isLoading]);
+
+            useEffect(() => {
+                roomDataRef.current = roomData;
+            }, [roomData]);
+
+            useEffect(() => {
+                userRef.current = user;
+            }, [user]);
 
             useEffect(() => {
                 Object.values(mediaRefs.current).forEach(el => {
@@ -234,7 +243,7 @@
                         } else if (err.type === 'network') {
                             setStatus("Network connection lost.");
                         } else {
-                            // Retry or specific error handling can go here
+                            // Retry logic logic handled in attemptConnection
                         }
                     }
                 });
@@ -249,7 +258,8 @@
                     }
                 });
 
-                peer.on('connection', (conn) => setupConnection(conn, nickname, roomData.code));
+                // USE REF here to ensure we use current code
+                peer.on('connection', (conn) => setupConnection(conn, nickname, roomDataRef.current.code));
 
                 peer.on('call', (call) => {
                     if (connectionsRef.current[call.peer]) {
@@ -262,7 +272,6 @@
             const attemptConnection = (peer, targetId, nickname, code) => {
                 const conn = peer.connect(targetId, { serialization: 'json' });
                 
-                // Explicitly handle connection errors that might not bubble to peer
                 conn.on('error', (err) => {
                     console.error("Conn Error:", err);
                     if (loadingRef.current) {
@@ -279,24 +288,34 @@
                         console.log("Connection timed out - Aborting");
                         setIsLoading(false);
                         setStatus("Host unreachable (Timeout). Check Room ID.");
-                        peer.destroy(); // Clean up partial connection
+                        peer.destroy(); 
                     }
                 }, 5000); 
             };
 
             const setupConnection = (conn, myNick, authCode) => {
                 conn.on('open', () => {
-                    conn.send({ type: 'auth', name: myNick, code: authCode, isHost: user.isHost });
+                    // Send auth packet using CURRENT user ref for host status
+                    conn.send({ type: 'auth', name: myNick, code: authCode, isHost: userRef.current.isHost });
                 });
 
                 conn.on('data', (data) => {
+                    // Access current state via refs inside callbacks
+                    const currentRoomData = roomDataRef.current;
+                    const currentUser = userRef.current;
+
                     // --- HOST LOGIC ---
                     if (data.type === 'auth') {
-                        if (data.code !== (user.isHost ? roomData.code : authCode)) {
+                        // Use Ref data for comparison to avoid stale closures
+                        const expectedCode = currentUser.isHost ? currentRoomData.code : authCode;
+                        
+                        if (data.code !== expectedCode) {
+                            console.log("Auth Failed. Expected:", expectedCode, "Received:", data.code);
                             conn.close(); 
                             return;
                         }
-                        conn.send({ type: 'welcome', roomName: roomData.name });
+                        
+                        conn.send({ type: 'welcome', roomName: currentRoomData.name });
                         setConnectedPeers(prev => [...prev, { id: conn.peer, name: data.name, isHost: data.isHost }]);
                         connectionsRef.current[conn.peer] = conn;
                         addSystemMessage(`${data.name} joined.`);
