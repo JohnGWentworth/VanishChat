@@ -1,682 +1,340 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { 
-  MessageSquare, 
-  Mic, 
-  MicOff, 
-  User, 
-  LogOut, 
-  ShieldCheck, 
-  Zap, 
-  Users, 
-  Copy, 
-  Send,
-  Lock,
-  Unlock,
-  Ghost,
-  Volume2,
-  Settings,
-  ShieldAlert,
-  MoreVertical,
-  UserMinus,
-  VolumeX,
-  AlertTriangle,
-  X,
-  Monitor,
-  MonitorOff,
-  Maximize,
-  Layout,
-  Info,
-  Shield
-} from 'lucide-react';
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VanishChat | Professional Secure Comms</title>
+    <!-- Modern Styling via Tailwind CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Essential Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&display=swap" rel="stylesheet">
+    <!-- Browser-side Translators (Required for React to work in index.html) -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #020617; color: #f8fafc; margin: 0; overflow-x: hidden; }
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 10px; }
+        .glass { background: rgba(15, 23, 42, 0.7); backdrop-filter: blur(16px); border: 1px solid rgba(51, 65, 85, 0.5); }
+        @keyframes pulse-subtle { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        .animate-pulse-subtle { animation: pulse-subtle 3s infinite; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
 
-// --- THEME ---
-const THEME = {
-  primary: 'indigo-500',
-  primaryHover: 'indigo-600',
-  bg: 'bg-slate-950',
-  surface: 'bg-slate-900',
-  border: 'border-slate-800',
-  text: 'text-slate-100',
-  textMuted: 'text-slate-400'
-};
+    <script type="text/babel">
+        // In the browser, we access React features through the global React object
+        const { useState, useEffect, useRef, useMemo } = React;
 
-const App = () => {
-  // --- STATE ---
-  const [view, setView] = useState('landing'); 
-  const [roomData, setRoomData] = useState({ id: '', name: '', code: '', isLocked: false });
-  const [user, setUser] = useState({ name: '', isHost: false });
-  const [messages, setMessages] = useState([]);
-  const [inputMessage, setInputMessage] = useState('');
-  
-  // Voice & Interaction State
-  const [isMicOn, setIsMicOn] = useState(false);
-  const [isSpeaking, setIsSpeaking] = useState(false);
-  const [isSharingScreen, setIsSharingScreen] = useState(false);
-  const [connectedUsers, setConnectedUsers] = useState([]);
-  const [showCopySuccess, setShowCopySuccess] = useState(false);
-  const [audioError, setAudioError] = useState(null);
-  const [modTarget, setModTarget] = useState(null); 
-  
-  // Info Modals State
-  const [infoModal, setInfoModal] = useState(null); // 'security' | 'guide' | null
+        // --- ICON COMPONENT ---
+        // This helper renders Lucide icons without needing 'import'
+        const Icon = ({ name, size = 20, className = "" }) => {
+            const [svg, setSvg] = useState("");
+            useEffect(() => {
+                const renderIcon = () => {
+                    if (window.lucide && window.lucide.icons) {
+                        const iconData = window.lucide.icons[name];
+                        if (iconData && Array.isArray(iconData)) {
+                            // Defensive check for icon children to prevent .map() errors
+                            const children = iconData[2];
+                            if (Array.isArray(children)) {
+                                const childrenSvg = children.map(([tag, attrs]) => {
+                                    const attrStr = Object.entries(attrs || {}).map(([k, v]) => `${k}="${v}"`).join(' ');
+                                    return `<${tag} ${attrStr}></${tag}>`;
+                                }).join('');
+                                setSvg(`<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="${className}">${childrenSvg}</svg>`);
+                            }
+                        }
+                    }
+                };
+                renderIcon();
+                const timer = setInterval(renderIcon, 1000);
+                return () => clearInterval(timer);
+            }, [name, size, className]);
+            return <span className="inline-flex items-center justify-center" dangerouslySetInnerHTML={{ __html: svg }} />;
+        };
 
-  // Refs
-  const localStreamRef = useRef(null);
-  const screenStreamRef = useRef(null);
-  const audioContextRef = useRef(null);
-  const animationFrameRef = useRef(null);
-  const scrollRef = useRef(null);
-  const videoRef = useRef(null);
+        const App = () => {
+            const [view, setView] = useState('landing');
+            const [roomData, setRoomData] = useState({ id: '', name: '', code: '' });
+            const [user, setUser] = useState({ name: '', isHost: false });
+            const [messages, setMessages] = useState([]);
+            const [inputMessage, setInputMessage] = useState('');
+            const [isMicOn, setIsMicOn] = useState(false);
+            const [isSharingScreen, setIsSharingScreen] = useState(false);
+            const [connectedPeers, setConnectedPeers] = useState([]);
+            const [status, setStatus] = useState(null);
+            const [infoModal, setInfoModal] = useState(null);
 
-  // --- SCREEN SHARING LOGIC ---
+            const peerRef = useRef(null);
+            const localStreamRef = useRef(null);
+            const scrollRef = useRef(null);
+            const videoRef = useRef(null);
+            const connectionsRef = useRef({});
 
-  const startScreenShare = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getDisplayMedia({ 
-        video: { cursor: "always" },
-        audio: false 
-      });
-      
-      screenStreamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-      }
-      setIsSharingScreen(true);
-      addSystemMessage(`${user.name} started sharing their screen.`);
+            // PeerJS Logic for Voice/Chat
+            const initPeer = (myId, nickname, targetRoomId = null, joinCode = null) => {
+                const peer = new Peer(myId);
+                peerRef.current = peer;
 
-      // Listen for the "Stop Sharing" button in the browser UI
-      stream.getVideoTracks()[0].onended = () => {
-        stopScreenShare();
-      };
-    } catch (err) {
-      console.error("Screen Share Error:", err);
-      setAudioError("Screen capture failed or was cancelled.");
-    }
-  };
+                peer.on('open', () => {
+                    if (targetRoomId) {
+                        const conn = peer.connect(targetRoomId);
+                        setupConnection(conn, nickname, joinCode);
+                    }
+                });
 
-  const stopScreenShare = () => {
-    if (screenStreamRef.current) {
-      screenStreamRef.current.getTracks().forEach(track => track.stop());
-      screenStreamRef.current = null;
-    }
-    setIsSharingScreen(false);
-    addSystemMessage(`${user.name} stopped screen sharing.`);
-  };
+                peer.on('connection', (conn) => setupConnection(conn, nickname, roomData.code));
 
-  const toggleScreenShare = () => {
-    if (isSharingScreen) {
-      stopScreenShare();
-    } else {
-      startScreenShare();
-    }
-  };
+                peer.on('call', (call) => {
+                    if (connectionsRef.current[call.peer]) {
+                        call.answer(localStreamRef.current);
+                        call.on('stream', (s) => {
+                            const audio = new Audio();
+                            audio.srcObject = s;
+                            audio.play();
+                        });
+                    }
+                });
 
-  // --- MODERATION LOGIC ---
+                peer.on('error', () => setStatus("Handshake Failed. Check Room ID/Passcode."));
+            };
 
-  const toggleRoomLock = () => {
-    if (!user.isHost) return;
-    const newState = !roomData.isLocked;
-    setRoomData(prev => ({ ...prev, isLocked: newState }));
-    addSystemMessage(newState ? "Room is now LOCKED. No new users can join." : "Room is now UNLOCKED.");
-  };
+            const setupConnection = (conn, myNick, authCode) => {
+                conn.on('open', () => {
+                    conn.send({ type: 'auth', name: myNick, code: authCode, isHost: user.isHost });
+                });
 
-  const kickUser = (targetName) => {
-    setConnectedUsers(prev => prev.filter(u => u.name !== targetName));
-    addSystemMessage(`User "${targetName}" was removed from the session by the host.`);
-    setModTarget(null);
-  };
+                conn.on('data', (data) => {
+                    if (data.type === 'auth') {
+                        if (data.code !== (user.isHost ? roomData.code : authCode)) {
+                            addSystemMessage("Alert: Invalid verification attempt.");
+                            conn.close();
+                            return;
+                        }
+                        setConnectedPeers(prev => [...prev, { id: conn.peer, name: data.name, isHost: data.isHost }]);
+                        connectionsRef.current[conn.peer] = conn;
+                        addSystemMessage(`${data.name} verified and connected.`);
+                        if (localStreamRef.current) peerRef.current.call(conn.peer, localStreamRef.current);
+                    }
+                    if (data.type === 'chat') setMessages(prev => [...prev, data.payload]);
+                });
+            };
 
-  const muteUser = (targetName) => {
-    setConnectedUsers(prev => prev.map(u => 
-      u.name === targetName ? { ...u, mutedByHost: !u.mutedByHost } : u
-    ));
-    setModTarget(null);
-  };
+            const toggleMic = async () => {
+                if (isMicOn) {
+                    if (localStreamRef.current) localStreamRef.current.getTracks().forEach(t => t.stop());
+                    localStreamRef.current = null;
+                    setIsMicOn(false);
+                } else {
+                    try {
+                        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                        localStreamRef.current = stream;
+                        setIsMicOn(true);
+                        setStatus(null);
+                        connectedPeers.forEach(p => { if(!p.self) peerRef.current.call(p.id, stream); });
+                    } catch (e) { setStatus("Microphone access denied."); }
+                }
+            };
 
-  // --- VOICE LOGIC ---
+            const toggleScreenShare = async () => {
+                if (isSharingScreen) {
+                    if (localStreamRef.current) localStreamRef.current.getTracks().forEach(t => t.stop());
+                    setIsSharingScreen(false);
+                } else {
+                    try {
+                        const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+                        if (videoRef.current) videoRef.current.srcObject = stream;
+                        setIsSharingScreen(true);
+                        stream.getVideoTracks()[0].onended = () => setIsSharingScreen(false);
+                    } catch (e) { setStatus("Screen sharing cancelled."); }
+                }
+            };
 
-  const stopLocalStream = () => {
-    if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach(track => track.stop());
-      localStreamRef.current = null;
-    }
-    if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
-    setIsSpeaking(false);
-  };
+            const sendMessage = (e) => {
+                e.preventDefault();
+                if (!inputMessage.trim()) return;
+                const msg = { id: Date.now(), user: user.name, text: inputMessage, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) };
+                setMessages(prev => [...prev, msg]);
+                Object.values(connectionsRef.current).forEach(c => c.send({ type: 'chat', payload: msg }));
+                setInputMessage('');
+            };
 
-  const startVoiceActivityDetection = (stream) => {
-    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    const source = audioContext.createMediaStreamSource(stream);
-    const analyzer = audioContext.createAnalyser();
-    analyzer.fftSize = 256;
-    source.connect(analyzer);
+            const addSystemMessage = (text) => setMessages(prev => [...prev, { id: Date.now(), type: 'system', text }]);
 
-    const bufferLength = analyzer.frequencyBinCount;
-    const dataArray = new Uint8Array(bufferLength);
+            const createRoom = (e) => {
+                e.preventDefault();
+                const fd = new FormData(e.target);
+                const rid = Math.random().toString(36).substring(2, 9).toUpperCase();
+                setRoomData({ id: rid, name: fd.get('roomName'), code: fd.get('roomCode') });
+                setUser({ name: fd.get('nickname'), isHost: true });
+                setConnectedPeers([{ name: fd.get('nickname'), isHost: true, self: true, id: rid }]);
+                initPeer(rid, fd.get('nickname'));
+                setView('chat');
+            };
 
-    const checkVolume = () => {
-      analyzer.getByteFrequencyData(dataArray);
-      let values = 0;
-      for (let i = 0; i < bufferLength; i++) values += dataArray[i];
-      const average = values / bufferLength;
-      setIsSpeaking(average > 25); 
-      animationFrameRef.current = requestAnimationFrame(checkVolume);
-    };
+            const joinRoom = (e) => {
+                e.preventDefault();
+                const fd = new FormData(e.target);
+                const rid = fd.get('roomId').toUpperCase();
+                const myId = 'v-' + Math.random().toString(36).substr(2, 5);
+                setRoomData({ id: rid, name: 'Private Hub', code: fd.get('roomCode') });
+                setUser({ name: fd.get('nickname'), isHost: false });
+                setConnectedPeers([{ name: fd.get('nickname'), isHost: false, self: true, id: myId }]);
+                initPeer(myId, fd.get('nickname'), rid, fd.get('roomCode'));
+                setView('chat');
+            };
 
-    audioContextRef.current = audioContext;
-    checkVolume();
-  };
+            useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; }, [messages, isSharingScreen]);
 
-  const toggleMic = async () => {
-    if (isMicOn) {
-      stopLocalStream();
-      setIsMicOn(false);
-    } else {
-      try {
-        setAudioError(null);
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        localStreamRef.current = stream;
-        startVoiceActivityDetection(stream);
-        setIsMicOn(true);
-      } catch (err) {
-        setAudioError("Microphone access denied.");
-      }
-    }
-  };
+            // UI Sections
+            if (view === 'landing') {
+                return (
+                    <div className="max-w-5xl mx-auto pt-20 px-6 pb-20 animate-in fade-in duration-1000">
+                        {infoModal && (
+                            <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/80 backdrop-blur-md">
+                                <div className="bg-slate-900 border border-slate-800 w-full max-w-md rounded-[3rem] p-10 relative shadow-2xl">
+                                    <button onClick={() => setInfoModal(null)} className="absolute top-8 right-8 p-2 hover:bg-slate-800 rounded-full transition-colors"><Icon name="X" /></button>
+                                    <h2 className="text-2xl font-black mb-8 uppercase tracking-tighter">{infoModal === 'security' ? 'Security Protocol' : 'User Guide'}</h2>
+                                    <div className="space-y-6 text-sm text-slate-400 leading-relaxed">
+                                        {infoModal === 'security' ? (
+                                            <>
+                                                <p><strong className="text-white block mb-1">Peer-to-Peer Encryption</strong> Your data travels directly between computers. We don't have a central server that can be hacked.</p>
+                                                <p><strong className="text-white block mb-1">Zero Persistence</strong> Messages only exist in your browser's RAM. They are deleted forever the moment you leave.</p>
+                                                <p><strong className="text-white block mb-1">Password Challenge</strong> Rooms are invisible and locked. Trolls cannot join without your unique passcode.</p>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <p>1. <strong className="text-white">Start Hub:</strong> Create a unique ID and secret passcode.</p>
+                                                <p>2. <strong className="text-white">Invite:</strong> Share the ID and Passcode with your team.</p>
+                                                <p>3. <strong className="text-white">Vanish:</strong> Click EXIT when finished to scrub all data traces.</p>
+                                            </>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
 
-  // --- ROOM LOGIC ---
+                        <div className="text-center mb-16">
+                            <div className="inline-flex px-4 py-1.5 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-[10px] font-black tracking-widest mb-6 uppercase">
+                                <Icon name="ShieldCheck" size={14} className="mr-2" /> Security v1.0.7-FIXED Verified
+                            </div>
+                            <h1 className="text-8xl font-black mb-4 tracking-tighter bg-gradient-to-b from-white to-slate-500 bg-clip-text text-transparent">VanishChat</h1>
+                            <p className="text-slate-400 text-xl max-w-xl mx-auto mb-10 font-medium">Disposable secure communication for teams. <br/>No logs, no accounts, no tracking.</p>
+                            <div className="flex justify-center gap-4">
+                                <button onClick={() => setInfoModal('security')} className="px-8 py-3.5 bg-indigo-500/10 border border-indigo-500/20 rounded-2xl text-indigo-400 font-black text-[10px] tracking-widest hover:bg-indigo-500/20 transition-all">SECURITY PROTOCOL</button>
+                                <button onClick={() => setInfoModal('guide')} className="px-8 py-3.5 bg-slate-800 border border-slate-700 rounded-2xl text-slate-300 font-black text-[10px] tracking-widest hover:bg-slate-700 transition-all">USER GUIDE</button>
+                            </div>
+                        </div>
 
-  const createRoom = (e) => {
-    e.preventDefault();
-    const formData = new FormData(e.target);
-    const roomName = formData.get('roomName');
-    const nick = formData.get('nickname');
-    const code = formData.get('roomCode');
-
-    const newId = Math.random().toString(36).substring(2, 9).toUpperCase();
-    setRoomData({ id: newId, name: roomName, code: code, isLocked: false });
-    setUser({ name: nick, isHost: true });
-    setConnectedUsers([
-      { name: nick, isHost: true, speaking: false, self: true, mutedByHost: false },
-      { name: 'Director_A', isHost: false, speaking: false, mutedByHost: false },
-      { name: 'Lead_Dev', isHost: false, speaking: false, mutedByHost: false }
-    ]);
-    setView('chat');
-    addSystemMessage(`Room created. Session is encrypted.`);
-  };
-
-  const joinRoom = (e) => {
-    e.preventDefault();
-    const formData = new FormData(e.target);
-    const rid = formData.get('roomId').toUpperCase();
-    const nick = formData.get('nickname');
-
-    setRoomData({ id: rid, name: 'Project Comms', code: '••••', isLocked: false });
-    setUser({ name: nick, isHost: false });
-    setConnectedUsers([
-      { name: 'Admin', isHost: true, speaking: false, mutedByHost: false },
-      { name: nick, isHost: false, speaking: false, self: true, mutedByHost: false }
-    ]);
-    setView('chat');
-    addSystemMessage(`Joined encrypted session ${rid}.`);
-  };
-
-  const addSystemMessage = (text) => {
-    setMessages(prev => [...prev, {
-      id: Date.now(),
-      type: 'system',
-      text: text,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    }]);
-  };
-
-  const sendMessage = (e) => {
-    e.preventDefault();
-    if (!inputMessage.trim()) return;
-    setMessages(prev => [...prev, {
-      id: Date.now(),
-      type: 'user',
-      user: user.name,
-      text: inputMessage,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    }]);
-    setInputMessage('');
-  };
-
-  const copyInvite = () => {
-    const text = `Join my VanishChat!\nRoom ID: ${roomData.id}\nPasscode: ${roomData.code}`;
-    navigator.clipboard.writeText(text);
-    setShowCopySuccess(true);
-    setTimeout(() => setShowCopySuccess(false), 2000);
-  };
-
-  useEffect(() => {
-    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [messages, isSharingScreen]);
-
-  useEffect(() => {
-    return () => {
-      stopLocalStream();
-      stopScreenShare();
-    };
-  }, []);
-
-  // --- UI COMPONENTS ---
-
-  const AdPlaceholder = ({ label = "Advertisement", height = "h-24" }) => (
-    <div className={`w-full ${height} bg-slate-900/50 border border-dashed border-slate-800 rounded-xl flex items-center justify-center mb-4 overflow-hidden group hover:border-slate-700 transition-colors`}>
-      <span className="text-slate-700 text-[10px] font-mono uppercase tracking-widest group-hover:text-slate-500">{label}</span>
-    </div>
-  );
-
-  const Modal = ({ isOpen, onClose, title, children }) => {
-    if (!isOpen) return null;
-    return (
-      <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 backdrop-blur-md bg-black/60">
-        <div className="bg-slate-900 border border-slate-800 w-full max-w-sm rounded-[2rem] p-8 shadow-2xl animate-in zoom-in-95 duration-200">
-          <div className="flex justify-between items-center mb-6">
-            <h3 className="text-xl font-black tracking-tight">{title}</h3>
-            <button onClick={onClose} className="p-2 hover:bg-slate-800 rounded-full transition-colors">
-              <X size={20} />
-            </button>
-          </div>
-          <div className="custom-scrollbar overflow-y-auto max-h-[60vh]">
-            {children}
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  const LandingView = () => (
-    <div className="max-w-5xl mx-auto pt-16 px-6 pb-20">
-      <div className="text-center mb-12">
-        <div className="inline-flex items-center justify-center p-4 bg-indigo-500/10 rounded-3xl mb-6 border border-indigo-500/20 shadow-inner">
-          <Ghost className="w-12 h-12 text-indigo-400" />
-        </div>
-        <h1 className="text-6xl font-black mb-6 tracking-tight bg-gradient-to-b from-white to-slate-500 bg-clip-text text-transparent">
-          VanishChat
-        </h1>
-        <p className="text-slate-400 text-xl max-w-2xl mx-auto leading-relaxed">
-          Professional communication without the tracking. <br/>
-          Disposable voice, text, and screen sharing for secure collaboration.
-        </p>
-        
-        <div className="flex flex-wrap justify-center gap-4 mt-8">
-           <button 
-             onClick={() => setInfoModal('security')}
-             className="flex items-center gap-2 px-6 py-3 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 rounded-2xl border border-indigo-500/20 transition-all font-bold text-sm"
-           >
-             <Shield size={18} /> SECURITY PROTOCOL
-           </button>
-           <button 
-             onClick={() => setInfoModal('guide')}
-             className="flex items-center gap-2 px-6 py-3 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-2xl border border-slate-700 transition-all font-bold text-sm"
-           >
-             <Info size={18} /> USER GUIDE
-           </button>
-        </div>
-      </div>
-
-      <div className="grid md:grid-cols-2 gap-10 mb-16">
-        <div className="bg-slate-900 border border-slate-800 p-10 rounded-[2.5rem] hover:border-indigo-500/40 transition-all shadow-2xl relative overflow-hidden">
-          <div className="flex items-center gap-4 mb-8">
-            <div className="p-3 bg-indigo-500 rounded-2xl shadow-lg shadow-indigo-500/20">
-              <Zap className="text-white" size={24} />
-            </div>
-            <h2 className="text-2xl font-bold">New Session</h2>
-          </div>
-          <form onSubmit={createRoom} className="space-y-5">
-            <input required name="nickname" className="w-full bg-slate-800/50 border border-slate-700 rounded-2xl px-5 py-4 focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Username" />
-            <input required name="roomName" className="w-full bg-slate-800/50 border border-slate-700 rounded-2xl px-5 py-4 focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Project Name" />
-            <input required name="roomCode" className="w-full bg-slate-800/50 border border-slate-700 rounded-2xl px-5 py-4 focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Invite Passcode" />
-            <button className="w-full bg-indigo-500 hover:bg-indigo-600 text-white font-black py-4 rounded-2xl transition-all shadow-xl shadow-indigo-500/10 active:scale-95">
-              CREATE SECURE ROOM
-            </button>
-          </form>
-        </div>
-
-        <div className="bg-slate-900 border border-slate-800 p-10 rounded-[2.5rem] hover:border-emerald-500/40 transition-all shadow-2xl">
-          <div className="flex items-center gap-4 mb-8">
-            <div className="p-3 bg-emerald-500 rounded-2xl shadow-lg shadow-emerald-500/20">
-              <ShieldCheck className="text-white" size={24} />
-            </div>
-            <h2 className="text-2xl font-bold">Join Session</h2>
-          </div>
-          <form onSubmit={joinRoom} className="space-y-5">
-            <input required name="nickname" className="w-full bg-slate-800/50 border border-slate-700 rounded-2xl px-5 py-4 focus:outline-none focus:ring-2 focus:ring-emerald-500" placeholder="Username" />
-            <input required name="roomId" className="w-full bg-slate-800/50 border border-slate-700 rounded-2xl px-5 py-4 focus:outline-none focus:ring-2 focus:ring-emerald-500 uppercase" placeholder="Session ID" />
-            <input required name="roomCode" className="w-full bg-slate-800/50 border border-slate-700 rounded-2xl px-5 py-4 focus:outline-none focus:ring-2 focus:ring-emerald-500" placeholder="Passcode" />
-            <button className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-black py-4 rounded-2xl transition-all shadow-xl shadow-emerald-500/10 active:scale-95">
-              JOIN SECURE ROOM
-            </button>
-          </form>
-        </div>
-      </div>
-
-      {/* Info Modals */}
-      <Modal 
-        isOpen={infoModal === 'security'} 
-        onClose={() => setInfoModal(null)}
-        title="Security Protocol"
-      >
-        <div className="space-y-6 text-sm leading-relaxed text-slate-400 pb-4">
-          <div className="flex gap-4">
-            <div className="p-2 bg-indigo-500/10 rounded-lg shrink-0 h-fit"><ShieldCheck className="text-indigo-400" size={18} /></div>
-            <div>
-              <p className="font-bold text-slate-200 mb-1">Peer-to-Peer Architecture</p>
-              <p>Your audio and video streams travel directly between you and your participants. No central server intercepts your data.</p>
-            </div>
-          </div>
-          <div className="flex gap-4">
-            <div className="p-2 bg-indigo-500/10 rounded-lg shrink-0 h-fit"><Ghost className="text-indigo-400" size={18} /></div>
-            <div>
-              <p className="font-bold text-slate-200 mb-1">Zero Persistence Policy</p>
-              <p>All chat history and room data exist only in your browser's RAM. Once you exit or refresh, every trace of the conversation is purged.</p>
-            </div>
-          </div>
-          <div className="flex gap-4">
-            <div className="p-2 bg-indigo-500/10 rounded-lg shrink-0 h-fit"><Lock className="text-indigo-400" size={18} /></div>
-            <div>
-              <p className="font-bold text-slate-200 mb-1">Code-Verified Access</p>
-              <p>Rooms are invisible without an ID and locked behind a custom passcode. Trolls cannot "browse" or discover active rooms.</p>
-            </div>
-          </div>
-          <div className="p-4 bg-slate-800 rounded-xl border border-slate-700 text-xs text-center font-medium">
-             VanishChat does not use cookies, trackers, or biometric verification. Your identity remains your own.
-          </div>
-        </div>
-      </Modal>
-
-      <Modal 
-        isOpen={infoModal === 'guide'} 
-        onClose={() => setInfoModal(null)}
-        title="User Guide"
-      >
-        <div className="space-y-6 text-sm text-slate-400 pb-4">
-          <div className="flex gap-4 items-start">
-            <div className="w-6 h-6 rounded-full bg-indigo-500 text-white flex items-center justify-center text-[10px] font-black shrink-0 mt-0.5">01</div>
-            <div>
-              <p className="font-bold text-slate-200 mb-1">Establish a Hub</p>
-              <p>Enter a nickname and a room name. Create a unique passcode to share with your team.</p>
-            </div>
-          </div>
-          <div className="flex gap-4 items-start">
-            <div className="w-6 h-6 rounded-full bg-indigo-500 text-white flex items-center justify-center text-[10px] font-black shrink-0 mt-0.5">02</div>
-            <div>
-              <p className="font-bold text-slate-200 mb-1">Invite Collaborators</p>
-              <p>Click "Invite" to copy the Room ID and Passcode. Send these details via any secure messaging channel.</p>
-            </div>
-          </div>
-          <div className="flex gap-4 items-start">
-            <div className="w-6 h-6 rounded-full bg-indigo-500 text-white flex items-center justify-center text-[10px] font-black shrink-0 mt-0.5">03</div>
-            <div>
-              <p className="font-bold text-slate-200 mb-1">Real-Time Comms</p>
-              <p>Toggle your microphone for voice chat or use the screen share button for live presentations.</p>
-            </div>
-          </div>
-          <div className="flex gap-4 items-start">
-            <div className="w-6 h-6 rounded-full bg-red-500 text-white flex items-center justify-center text-[10px] font-black shrink-0 mt-0.5">04</div>
-            <div>
-              <p className="font-bold text-slate-200 mb-1">Vanish</p>
-              <p>Click "Exit" when finished. The system will automatically scrub the session from the environment.</p>
-            </div>
-          </div>
-        </div>
-      </Modal>
-    </div>
-  );
-
-  const ChatView = () => (
-    <div className="flex flex-col h-screen overflow-hidden bg-slate-950">
-      <header className="h-20 border-b border-slate-800 bg-slate-900/40 backdrop-blur-xl flex items-center justify-between px-8 shrink-0 z-10">
-        <div className="flex items-center gap-5">
-          <div className="p-3 bg-indigo-500/10 border border-indigo-500/20 rounded-2xl">
-            <Ghost className="text-indigo-400 w-6 h-6" />
-          </div>
-          <div>
-            <h3 className="font-black text-lg tracking-tight flex items-center gap-2">
-              {roomData.name} {roomData.isLocked && <Lock size={14} className="text-amber-500" />}
-            </h3>
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] text-slate-500 font-mono uppercase tracking-widest bg-slate-800 px-2 py-0.5 rounded">ID: {roomData.id}</span>
-            </div>
-          </div>
-        </div>
-        
-        <div className="flex items-center gap-3">
-          <button 
-            onClick={toggleScreenShare}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-black transition-all border ${
-              isSharingScreen 
-              ? 'bg-amber-500/10 border-amber-500/20 text-amber-400' 
-              : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-white'
-            }`}
-          >
-            {isSharingScreen ? <><MonitorOff size={16} /> STOP SHARING</> : <><Monitor size={16} /> SHARE SCREEN</>}
-          </button>
-          {user.isHost && (
-            <button 
-              onClick={toggleRoomLock}
-              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-black transition-all border ${
-                roomData.isLocked 
-                ? 'bg-amber-500/10 border-amber-500/20 text-amber-500' 
-                : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-white'
-              }`}
-            >
-              {roomData.isLocked ? <><Lock size={16} /> LOCKED</> : <><Unlock size={16} /> LOCK ROOM</>}
-            </button>
-          )}
-          <button 
-            onClick={copyInvite}
-            className="flex items-center gap-2 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 rounded-xl text-xs font-black transition-all text-white shadow-lg shadow-indigo-500/20"
-          >
-            {showCopySuccess ? "COPIED" : <><Copy size={16} /> INVITE</>}
-          </button>
-          <button 
-            onClick={() => setView('landing')}
-            className="p-2.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-xl transition-all border border-red-500/20"
-          >
-            <LogOut size={20} />
-          </button>
-        </div>
-      </header>
-
-      <div className="flex flex-1 overflow-hidden">
-        {/* User Sidebar */}
-        <aside className="w-80 border-r border-slate-800 bg-slate-900/20 flex flex-col p-6 shrink-0 hidden md:flex">
-          <div className="flex items-center justify-between mb-6">
-            <h4 className="text-[11px] font-black text-slate-500 uppercase tracking-[0.2em] flex items-center gap-2">
-              <Users size={14} /> TEAM
-            </h4>
-          </div>
-
-          <div className="space-y-3 flex-1 overflow-y-auto pr-2 custom-scrollbar">
-            {connectedUsers.map((u, i) => (
-              <div 
-                key={i} 
-                onClick={() => !u.self && setModTarget(u)}
-                className={`flex items-center justify-between p-4 rounded-2xl border transition-all cursor-pointer group ${
-                  (u.self && isSpeaking) || (u.speaking)
-                    ? 'bg-indigo-500/10 border-indigo-500/50' 
-                    : 'bg-slate-800/40 border-slate-800 hover:border-slate-700'
-                }`}
-              >
-                <div className="flex items-center gap-3">
-                  <div className={`w-10 h-10 rounded-full bg-slate-700 flex items-center justify-center text-sm font-bold border-2 ${
-                       (u.self && isSpeaking) || (u.speaking) ? 'border-indigo-400' : 'border-slate-600'
-                    }`}>
-                    {u.name[0].toUpperCase()}
-                  </div>
-                  <div className="flex flex-col">
-                    <span className={`text-sm font-bold ${u.self ? 'text-indigo-300' : 'text-slate-200'}`}>
-                      {u.name} {u.isHost && "👑"}
-                    </span>
-                    <span className="text-[10px] text-slate-500 uppercase font-bold tracking-tighter">
-                      {u.mutedByHost ? 'Muted' : (u.self && isMicOn ? 'Live' : 'Connected')}
-                    </span>
-                  </div>
-                </div>
-                {!u.self && (
-                  <MoreVertical size={16} className="text-slate-600 group-hover:text-slate-400" />
-                )}
-                {u.self && (
-                  <button 
-                    onClick={(e) => { e.stopPropagation(); toggleMic(); }}
-                    className={`p-2 rounded-xl ${isMicOn ? 'bg-indigo-500 text-white shadow-md' : 'bg-slate-700 text-slate-400'}`}
-                  >
-                    {isMicOn ? <Mic size={16} /> : <MicOff size={16} />}
-                  </button>
-                )}
-              </div>
-            ))}
-          </div>
-          <div className="mt-6"><AdPlaceholder label="OFFICE_SPONSOR" height="h-64" /></div>
-        </aside>
-
-        {/* Main Content Area */}
-        <main className={`flex-1 flex overflow-hidden ${isSharingScreen ? 'flex-col' : 'flex-row'}`}>
-          {/* Stage View for Screen Sharing */}
-          {isSharingScreen && (
-            <div className="flex-1 bg-black p-4 flex flex-col min-h-0">
-               <div className="flex-1 bg-slate-900 rounded-3xl overflow-hidden relative shadow-inner border border-slate-800">
-                  <video 
-                    ref={videoRef} 
-                    autoPlay 
-                    playsInline 
-                    className="w-full h-full object-contain"
-                  />
-                  <div className="absolute top-6 left-6 flex items-center gap-3 bg-black/60 backdrop-blur-md px-4 py-2 rounded-xl border border-white/10">
-                    <div className="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></div>
-                    <span className="text-xs font-black uppercase tracking-widest text-white">Live Presentation: {user.name}</span>
-                  </div>
-                  <div className="absolute bottom-6 right-6">
-                    <button onClick={() => videoRef.current?.requestFullscreen()} className="p-3 bg-white/10 hover:bg-white/20 rounded-xl text-white backdrop-blur-md transition-all">
-                      <Maximize size={20} />
-                    </button>
-                  </div>
-               </div>
-            </div>
-          )}
-
-          {/* Chat Panel - Full width if no screen share, sidebar if sharing */}
-          <div className={`flex flex-col bg-slate-950 transition-all duration-300 ${isSharingScreen ? 'h-72 border-t border-slate-800' : 'flex-1'}`}>
-            <div ref={scrollRef} className="flex-1 overflow-y-auto p-8 space-y-6 scroll-smooth">
-              {messages.map((msg) => (
-                <div key={msg.id} className={`flex flex-col ${msg.type === 'system' ? 'items-center' : ''}`}>
-                  {msg.type === 'system' ? (
-                    <div className="flex items-center gap-3 w-full opacity-50">
-                      <div className="h-px bg-slate-800 flex-1"></div>
-                      <span className="text-[9px] bg-slate-800 text-slate-400 px-4 py-1.5 rounded-full border border-slate-700 uppercase font-black tracking-widest">
-                        {msg.text}
-                      </span>
-                      <div className="h-px bg-slate-800 flex-1"></div>
+                        <div className="grid md:grid-cols-2 gap-10">
+                            <div className="bg-slate-900 border border-slate-800 p-10 rounded-[3.5rem] shadow-2xl group hover:border-indigo-500/30 transition-all">
+                                <h2 className="text-2xl font-bold mb-8 flex items-center gap-4 text-indigo-400"><Icon name="Zap" /> Create Hub</h2>
+                                <form onSubmit={createRoom} className="space-y-4">
+                                    <input required name="nickname" className="w-full bg-slate-800 border-slate-700 rounded-2xl px-6 py-4 outline-none focus:ring-2 focus:ring-indigo-500 text-sm" placeholder="Display Name" />
+                                    <input required name="roomName" className="w-full bg-slate-800 border-slate-700 rounded-2xl px-6 py-4 outline-none focus:ring-2 focus:ring-indigo-500 text-sm" placeholder="Hub Name" />
+                                    <input required name="roomCode" type="password" className="w-full bg-slate-800 border-slate-700 rounded-2xl px-6 py-4 outline-none focus:ring-2 focus:ring-indigo-500 text-sm" placeholder="Passcode" />
+                                    <button className="w-full bg-indigo-600 hover:bg-indigo-500 py-5 rounded-2xl font-black transition-all shadow-xl shadow-indigo-600/20 active:scale-95">START HUB</button>
+                                </form>
+                            </div>
+                            <div className="bg-slate-900 border border-slate-800 p-10 rounded-[3.5rem] shadow-2xl group hover:border-emerald-500/30 transition-all">
+                                <h2 className="text-2xl font-bold mb-8 flex items-center gap-4 text-emerald-400"><Icon name="ShieldCheck" /> Join Hub</h2>
+                                <form onSubmit={joinRoom} className="space-y-4">
+                                    <input required name="nickname" className="w-full bg-slate-800 border-slate-700 rounded-2xl px-6 py-4 outline-none focus:ring-2 focus:ring-emerald-500 text-sm" placeholder="Display Name" />
+                                    <input required name="roomId" className="w-full bg-slate-800 border-slate-700 rounded-2xl px-6 py-4 outline-none focus:ring-2 focus:ring-emerald-500 uppercase font-mono text-sm" placeholder="Room ID" />
+                                    <input required name="roomCode" type="password" className="w-full bg-slate-800 border-slate-700 rounded-2xl px-6 py-4 outline-none focus:ring-2 focus:ring-emerald-500 text-sm" placeholder="Passcode" />
+                                    <button className="w-full bg-emerald-600 hover:bg-emerald-700 py-5 rounded-2xl font-black transition-all text-white shadow-xl shadow-emerald-600/20 active:scale-95">ENTER HUB</button>
+                                </form>
+                            </div>
+                        </div>
+                        <div className="mt-20 text-center select-none">
+                            <p className="text-[9px] font-black text-slate-700 uppercase tracking-[0.6em] animate-pulse-subtle">Zero Persistence Protocol Active</p>
+                        </div>
                     </div>
-                  ) : (
-                    <div className={`flex flex-col max-w-[75%] ${msg.user === user.name ? 'ml-auto items-end' : ''}`}>
-                      <div className="flex items-center gap-2 mb-2 px-1">
-                        <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">{msg.user}</span>
-                        <span className="text-[10px] text-slate-700 font-mono">{msg.timestamp}</span>
-                      </div>
-                      <div className={`px-5 py-3 rounded-[1.5rem] text-sm leading-relaxed ${
-                        msg.user === user.name ? 'bg-indigo-600 text-white rounded-tr-none' : 'bg-slate-900 text-slate-200 rounded-tl-none border border-slate-800'
-                      }`}>
-                        {msg.text}
-                      </div>
+                );
+            }
+
+            return (
+                <div className="flex flex-col h-screen overflow-hidden animate-in fade-in duration-500">
+                    <header className="h-20 border-b border-slate-800 bg-slate-900/40 backdrop-blur-xl flex items-center justify-between px-8 shrink-0 z-50">
+                        <div className="flex items-center gap-5">
+                            <div className="p-3 bg-indigo-500/10 border border-indigo-500/20 rounded-2xl"><Icon name="Ghost" className="text-indigo-400" /></div>
+                            <div>
+                                <h3 className="font-black text-xs uppercase tracking-widest mb-1">{roomData.name}</h3>
+                                <div className="flex items-center gap-3">
+                                    <span className="text-[10px] text-slate-500 font-mono tracking-widest uppercase bg-slate-800 px-1.5 py-0.5 rounded">ID: {roomData.id}</span>
+                                    <span className="text-[9px] text-emerald-500 font-black uppercase tracking-[0.2em] flex items-center gap-1"><Icon name="ShieldCheck" size={10} /> Secure Hub</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div className="flex gap-4 items-center">
+                            <button onClick={toggleScreenShare} className={`px-5 py-2.5 rounded-xl text-[10px] font-black tracking-widest border transition-all ${isSharingScreen ? 'bg-amber-500/10 border-amber-500/20 text-amber-400 shadow-lg' : 'bg-slate-800 border-slate-700 hover:bg-slate-700'}`}>
+                                {isSharingScreen ? "STOP PRESENTING" : "SHARE SCREEN"}
+                            </button>
+                            <button onClick={() => window.location.reload()} className="flex items-center gap-2 px-5 py-2.5 bg-red-500/10 text-red-400 rounded-xl border border-red-500/20 hover:bg-red-500/20 font-black text-[10px] tracking-widest transition-all">
+                                <Icon name="LogOut" size={14} /> EXIT CHAT
+                            </button>
+                        </div>
+                    </header>
+                    <div className="flex flex-1 overflow-hidden">
+                        <aside className="w-72 border-r border-slate-800 bg-slate-900/20 p-6 hidden md:flex flex-col shrink-0">
+                            <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-6 flex items-center gap-3"><span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span> Authorized Team</h4>
+                            <div className="space-y-3 flex-1 overflow-y-auto custom-scrollbar">
+                                {connectedPeers.map((u, i) => (
+                                    <div key={i} className="flex items-center justify-between p-4 bg-slate-800/40 border border-slate-800 rounded-3xl transition-all hover:border-indigo-500/30">
+                                        <div className="flex flex-col min-w-0">
+                                            <span className="text-sm font-black truncate text-slate-200">{u.name} {u.isHost && '👑'}</span>
+                                            <span className="text-[9px] text-slate-500 uppercase font-black tracking-widest">{u.self ? 'You (Verified)' : 'Member'}</span>
+                                        </div>
+                                        {u.self && (
+                                            <button onClick={toggleMic} className={`p-2.5 rounded-2xl transition-all ${isMicOn ? 'bg-indigo-500 text-white shadow-lg shadow-indigo-500/30' : 'bg-slate-700 text-slate-500 hover:text-slate-400'}`}><Icon name={isMicOn ? "Mic" : "MicOff"} size={16} /></button>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                        </aside>
+                        <main className="flex-1 flex flex-col bg-slate-950 relative">
+                            {isSharingScreen && <div className="h-3/4 bg-black p-6 shrink-0 animate-in zoom-in-95 duration-500"><video ref={videoRef} autoPlay playsInline className="w-full h-full object-contain rounded-[2.5rem] border border-slate-800 shadow-2xl" /></div>}
+                            <div ref={scrollRef} className="flex-1 overflow-y-auto p-10 space-y-6 custom-scrollbar">
+                                {messages.length === 0 && (
+                                    <div className="flex flex-col items-center justify-center h-full opacity-10 select-none grayscale">
+                                        <Icon name="Ghost" size={120} className="mb-6" />
+                                        <p className="text-2xl font-black uppercase tracking-[0.5em]">Ephemeral Hub</p>
+                                    </div>
+                                )}
+                                {messages.map(m => (
+                                    <div key={m.id} className={`flex flex-col ${m.type === 'system' ? 'items-center' : (m.user === user.name ? 'items-end' : 'items-start')}`}>
+                                        {m.type === 'system' ? <span className="text-[9px] bg-slate-800 px-4 py-1.5 rounded-full text-slate-500 border border-slate-700 uppercase tracking-widest font-black shadow-sm">{m.text}</span> :
+                                            <div className={`flex flex-col max-w-[70%] ${m.user === user.name ? 'items-end' : 'items-start'}`}>
+                                                <span className="text-[9px] text-slate-500 mb-1.5 px-3 font-black uppercase tracking-widest">{m.user} • {m.timestamp}</span>
+                                                <div className={`p-5 rounded-[1.5rem] text-sm leading-relaxed ${m.user === user.name ? 'bg-indigo-600 text-white rounded-tr-none shadow-indigo-900/40' : 'bg-slate-900 text-slate-200 rounded-tl-none border border-slate-800 shadow-sm'}`}>{m.text}</div>
+                                            </div>
+                                        }
+                                    </div>
+                                ))}
+                            </div>
+                            {status && <div className="absolute bottom-28 left-1/2 -translate-x-1/2 bg-red-600 text-white px-8 py-4 rounded-2xl text-[10px] font-black shadow-2xl flex items-center gap-4 animate-bounce z-50 uppercase tracking-widest border border-red-500 shadow-red-900/20"><Icon name="ShieldAlert" size={16} /> {status}</div>}
+                            <div className="p-8 border-t border-slate-800/50 bg-slate-900/20 backdrop-blur-2xl">
+                                <form onSubmit={sendMessage} className="max-w-4xl mx-auto flex gap-6">
+                                    <div className="flex-1 bg-slate-800/50 border border-slate-700/50 rounded-2xl px-8 py-1 flex items-center focus-within:ring-2 focus-within:ring-indigo-500/50 transition-all shadow-inner">
+                                        <input value={inputMessage} onChange={e => setInputMessage(e.target.value)} className="w-full bg-transparent py-4 outline-none font-medium text-sm text-slate-200" placeholder="Transmit secure message..." />
+                                    </div>
+                                    <button type="submit" className="bg-indigo-600 p-5 rounded-2xl hover:bg-indigo-500 transition-all shadow-xl shadow-indigo-600/20 text-white active:scale-90"><Icon name="Send" size={24} /></button>
+                                </form>
+                            </div>
+                        </main>
                     </div>
-                  )}
                 </div>
-              ))}
-            </div>
+            );
+        };
 
-            <div className="p-6 bg-slate-900/40 backdrop-blur-md border-t border-slate-800/50">
-              <form onSubmit={sendMessage} className="flex gap-4 max-w-5xl mx-auto">
-                  <input 
-                    value={inputMessage}
-                    onChange={(e) => setInputMessage(e.target.value)}
-                    placeholder="Type a secure message..."
-                    className="flex-1 bg-slate-800/50 border border-slate-700/50 rounded-2xl px-6 py-4 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 text-sm font-medium"
-                  />
-                  <button type="submit" className="bg-indigo-600 hover:bg-indigo-500 p-4 rounded-2xl transition-all text-white shadow-lg shadow-indigo-500/10">
-                    <Send size={22} />
-                  </button>
-              </form>
-            </div>
-          </div>
-        </main>
-
-        {/* Dynamic Ad Sidebar */}
-        {!isSharingScreen && (
-          <aside className="w-56 border-l border-slate-800 bg-slate-900/20 p-6 shrink-0 hidden xl:flex flex-col">
-            <h4 className="text-[11px] font-black text-slate-500 uppercase tracking-widest mb-6">Partners</h4>
-            <AdPlaceholder label="PROFESSIONAL_BANNER" height="h-full" />
-          </aside>
-        )}
-      </div>
-
-      {/* Moderation Modal */}
-      <Modal 
-        isOpen={!!modTarget} 
-        onClose={() => setModTarget(null)} 
-        title={user.isHost ? "User Controls" : "User Info"}
-      >
-        <div className="space-y-4">
-          <div className="flex items-center gap-4 p-4 bg-slate-800/50 rounded-2xl mb-4">
-            <div className="w-12 h-12 rounded-full bg-slate-700 flex items-center justify-center font-bold text-xl">
-              {modTarget?.name?.[0].toUpperCase()}
-            </div>
-            <div>
-              <p className="font-bold">{modTarget?.name}</p>
-              <p className="text-[10px] text-slate-500 uppercase font-black">Authorized Member</p>
-            </div>
-          </div>
-
-          {user.isHost ? (
-            <div className="grid grid-cols-1 gap-3">
-              <button 
-                onClick={() => muteUser(modTarget.name)}
-                className="flex items-center gap-3 w-full p-4 rounded-2xl bg-slate-800 hover:bg-slate-700 transition-colors text-sm font-bold"
-              >
-                <VolumeX size={18} className="text-amber-400" />
-                {modTarget?.mutedByHost ? "Unmute User" : "Remote Mute"}
-              </button>
-              <button 
-                onClick={() => kickUser(modTarget.name)}
-                className="flex items-center gap-3 w-full p-4 rounded-2xl bg-red-500/10 hover:bg-red-500/20 transition-colors text-sm font-bold text-red-400"
-              >
-                <UserMinus size={18} />
-                Remove from Session
-              </button>
-            </div>
-          ) : (
-            <div className="space-y-3">
-               <button onClick={() => setModTarget(null)} className="flex items-center gap-3 w-full p-4 rounded-2xl bg-slate-800 hover:bg-slate-700 text-sm font-bold">
-                <VolumeX size={18} /> Mute Locally
-              </button>
-               <button onClick={() => setModTarget(null)} className="flex items-center gap-3 w-full p-4 rounded-2xl bg-red-500/10 hover:bg-red-500/20 text-sm font-bold text-red-400">
-                <AlertTriangle size={18} /> Report Conflict
-              </button>
-            </div>
-          )}
-        </div>
-      </Modal>
-
-      {/* System Alerts */}
-      {audioError && (
-        <div className="fixed bottom-32 left-1/2 -translate-x-1/2 bg-red-500 text-white px-6 py-3 rounded-full flex items-center gap-3 shadow-2xl animate-in slide-in-from-bottom-5">
-          <ShieldAlert size={18} />
-          <span className="text-xs font-bold uppercase tracking-widest">{audioError}</span>
-          <button onClick={() => setAudioError(null)} className="p-1 hover:bg-white/10 rounded-full"><X size={14} /></button>
-        </div>
-      )}
-    </div>
-  );
-
-  return (
-    <div className={`min-h-screen ${THEME.bg} ${THEME.text} font-sans selection:bg-indigo-500/30`}>
-      {view === 'landing' ? <LandingView /> : <ChatView />}
-    </div>
-  );
-};
-
-export default App;
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
