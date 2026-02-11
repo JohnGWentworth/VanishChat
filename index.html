@@ -28,23 +28,29 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        // In the browser, we access React features through the global React object
         const { useState, useEffect, useRef, useMemo } = React;
 
-        // --- ICON COMPONENT ---
-        // This helper renders Lucide icons without needing 'import'
+        // --- ENHANCED ROBUST ICON COMPONENT ---
         const Icon = ({ name, size = 20, className = "" }) => {
             const [svg, setSvg] = useState("");
+            
             useEffect(() => {
+                let mounted = true;
                 const renderIcon = () => {
                     if (window.lucide && window.lucide.icons) {
-                        const iconData = window.lucide.icons[name];
+                        // Lucide icons can be PascalCase or lowercase depending on the source
+                        const iconName = name;
+                        const pascalName = name.charAt(0).toUpperCase() + name.slice(1);
+                        const lowerName = name.toLowerCase();
+                        
+                        const iconData = window.lucide.icons[iconName] || 
+                                         window.lucide.icons[pascalName] || 
+                                         window.lucide.icons[lowerName];
+
                         if (iconData && Array.isArray(iconData)) {
-                            // Defensive check for icon children to prevent .map() errors
                             const children = iconData[2];
                             if (Array.isArray(children)) {
                                 const childrenSvg = children.map((item) => {
-                                    // Manually handle item to avoid "non-iterable" destructuring error
                                     if (Array.isArray(item) && item.length >= 2) {
                                         const tag = item[0];
                                         const attrs = item[1] || {};
@@ -53,16 +59,32 @@
                                     }
                                     return '';
                                 }).join('');
-                                setSvg(`<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="${className}">${childrenSvg}</svg>`);
+                                
+                                if (mounted) {
+                                    setSvg(`<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="${className}">${childrenSvg}</svg>`);
+                                    return true; // Success!
+                                }
                             }
                         }
                     }
+                    return false;
                 };
-                renderIcon();
-                const timer = setInterval(renderIcon, 1000);
-                return () => clearInterval(timer);
+
+                // Try to render immediately
+                if (!renderIcon()) {
+                    // If library isn't ready, poll until it is
+                    const timer = setInterval(() => {
+                        if (renderIcon()) clearInterval(timer);
+                    }, 500);
+                    return () => {
+                        mounted = false;
+                        clearInterval(timer);
+                    };
+                }
+                return () => { mounted = false; };
             }, [name, size, className]);
-            return <span className="inline-flex items-center justify-center" dangerouslySetInnerHTML={{ __html: svg }} />;
+
+            return <span className="inline-flex items-center justify-center shrink-0" dangerouslySetInnerHTML={{ __html: svg }} />;
         };
 
         const App = () => {
@@ -83,7 +105,6 @@
             const videoRef = useRef(null);
             const connectionsRef = useRef({});
 
-            // PeerJS Logic for Voice/Chat
             const initPeer = (myId, nickname, targetRoomId = null, joinCode = null) => {
                 const peer = new Peer(myId);
                 peerRef.current = peer;
@@ -198,7 +219,6 @@
 
             useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; }, [messages, isSharingScreen]);
 
-            // UI Sections
             if (view === 'landing') {
                 return (
                     <div className="max-w-5xl mx-auto pt-20 px-6 pb-20 animate-in fade-in duration-1000">
@@ -238,8 +258,8 @@
                             </div>
                         </div>
 
-                        <div className="grid md:grid-cols-2 gap-10">
-                            <div className="bg-slate-900 border border-slate-800 p-10 rounded-[3.5rem] shadow-2xl group hover:border-indigo-500/30 transition-all text-left">
+                        <div className="grid md:grid-cols-2 gap-10 text-left">
+                            <div className="bg-slate-900 border border-slate-800 p-10 rounded-[3.5rem] shadow-2xl group hover:border-indigo-500/30 transition-all">
                                 <h2 className="text-2xl font-bold mb-8 flex items-center gap-4 text-indigo-400"><Icon name="Zap" /> Create Hub</h2>
                                 <form onSubmit={createRoom} className="space-y-4">
                                     <input required name="nickname" className="w-full bg-slate-800 border-slate-700 rounded-2xl px-6 py-4 outline-none focus:ring-2 focus:ring-indigo-500 text-sm" placeholder="Display Name" />
@@ -248,7 +268,7 @@
                                     <button className="w-full bg-indigo-600 hover:bg-indigo-500 py-5 rounded-2xl font-black transition-all shadow-xl shadow-indigo-600/20 active:scale-95 text-white uppercase tracking-widest">Start Hub</button>
                                 </form>
                             </div>
-                            <div className="bg-slate-900 border border-slate-800 p-10 rounded-[3.5rem] shadow-2xl group hover:border-emerald-500/30 transition-all text-left">
+                            <div className="bg-slate-900 border border-slate-800 p-10 rounded-[3.5rem] shadow-2xl group hover:border-emerald-500/30 transition-all">
                                 <h2 className="text-2xl font-bold mb-8 flex items-center gap-4 text-emerald-400"><Icon name="ShieldCheck" /> Join Hub</h2>
                                 <form onSubmit={joinRoom} className="space-y-4">
                                     <input required name="nickname" className="w-full bg-slate-800 border-slate-700 rounded-2xl px-6 py-4 outline-none focus:ring-2 focus:ring-emerald-500 text-sm" placeholder="Display Name" />
@@ -290,10 +310,10 @@
                     <div className="flex flex-1 overflow-hidden">
                         <aside className="w-72 border-r border-slate-800 bg-slate-900/20 p-6 hidden md:flex flex-col shrink-0">
                             <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-6 flex items-center gap-3"><span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span> Authorized Team</h4>
-                            <div className="space-y-3 flex-1 overflow-y-auto custom-scrollbar">
+                            <div className="space-y-3 flex-1 overflow-y-auto custom-scrollbar pr-2">
                                 {connectedPeers.map((u, i) => (
-                                    <div key={i} className="flex items-center justify-between p-4 bg-slate-800/40 border border-slate-800 rounded-3xl transition-all hover:border-indigo-500/30">
-                                        <div className="flex flex-col min-w-0 text-left">
+                                    <div key={i} className="flex items-center justify-between p-4 bg-slate-800/40 border border-slate-800 rounded-3xl transition-all hover:border-indigo-500/30 text-left">
+                                        <div className="flex flex-col min-w-0">
                                             <span className="text-sm font-black truncate text-slate-200">{u.name} {u.isHost && '👑'}</span>
                                             <span className="text-[9px] text-slate-500 uppercase font-black tracking-widest">{u.self ? 'You (Verified)' : 'Member'}</span>
                                         </div>
