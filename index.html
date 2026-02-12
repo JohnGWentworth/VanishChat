@@ -203,6 +203,14 @@
                 }
             }, []);
 
+            // Global Status Clearer
+            useEffect(() => {
+                if (status) {
+                    const timer = setTimeout(() => setStatus(null), 4000);
+                    return () => clearTimeout(timer);
+                }
+            }, [status]);
+
             // Sync Refs with State
             useEffect(() => {
                 loadingRef.current = isLoading;
